@@ -1,0 +1,70 @@
+[workspace]
+resolver = "3"
+members=[
+    "crates/tars-codec",
+    "crates/bytes-util",
+    "crates/platforms-parser",
+]
+
+[workspace.package]
+version = "0.0.1"
+authors = ["slotsun"]
+repository = "https://github.com/slotsun/slive-core-api-rust"
+license = "MIT OR Apache-2.0"
+edition = "2024"
+
+[workspace.dependencies]
+bytes = "1.11.1"
+tokio = { version = "1.51.0", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "process", "signal", "sync", "time"] }
+tokio-util = { version = "0.7.18", features = ["codec", "io", "rt", "time"] }
+reqwest = { version = "0.12.26", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots-no-provider", "gzip", "deflate"] }
+serde = { version = "1.0.217", features = ["derive", "rc"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt"] }
+async-trait = "0.1.89"
+rand = "0.10.0"
+regex = { version = "1.12.3", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
+futures = "0.3.32"
+chrono = { version = "0.4.44", features = ["serde"] }
+uuid = { version = "1.21.0", features = ["v4", "serde"] }
+prost = "0.14.3"
+prost-types = "0.14.3"
+prost-build = "0.14.3"
+sha2 = "0.11.0"
+hex = "0.4.3"
+flate2 = { version = "1.1.9", features = ["zlib-rs"], default-features = false }
+url = "2.5.8"
+anyhow = "1.0.102"
+tower-http = { version = "0.6.8", features = ["cors", "trace", "request-id", "fs"] }
+tempfile = "3.27.0"
+axum = { version = "0.8.4", features = ["ws"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "sqlite", "macros", "uuid", "chrono", "json"] }
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
+mimalloc = "0.1.50"
+argon2 = "0.5"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+tar = "0.4"
+chrono-tz = "0.10"
+cron = "0.16"
+dotenvy = "0.15"
+sysinfo = { version = "0.38" }
+tracing-appender = "0.2"
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
+m3u8-rs = "6.0.0"
+md-5 = "0.11.0"
+base64 = "0.22.1"
+byteorder = "1.5"
+brotli = "8.0"
+openssl = { version = "0.10", features = ["vendored"] }
+native-tls = "0.2.18"
+rustls = { version = "0.23.40", default-features = false, features = ["logging", "aws-lc-rs", "tls12"] }
+rustls-platform-verifier = "0.7.0"
+libsm = "0.6.0"
+rustc-hash = "2.1"
+memchr = "2.7.6"
+criterion = "0.8.1"
+zlib-rs = "0.6.3"

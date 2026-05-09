@@ -1,0 +1,71 @@
+[package]
+name = "platforms-parser"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+bytes = { workspace = true }
+tokio = { workspace = true, features = [
+    "rt",
+    "io-util",
+    "macros",
+    "fs",
+    "process",
+] }
+reqwest = { workspace = true, features = [
+    "json",
+    "stream",
+    "gzip",
+    "deflate",
+] }
+rustls = { workspace = true }
+rustls-platform-verifier = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+libsm = { workspace = true }
+
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json = { workspace = true }
+
+regex = { workspace = true, default-features = false, features = [
+    "std",
+    "unicode-perl",
+] }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
+tars-codec = { path = "../tars-codec"}
+rustc-hash = { workspace = true }
+rand = { workspace = true }
+
+uuid  = { workspace = true, features = ["v4"]}
+m3u8-rs = { workspace = true }
+md-5 = { workspace = true }
+hex = { workspace = true }
+percent-encoding = "2.3"
+base64 = { workspace = true }
+tokio-tungstenite = { workspace = true, default-features = false, features = ["connect"] }
+chrono = { workspace = true, features = ["serde"] }
+futures = { workspace = true }
+# tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs", "logging", "tls12"] }
+# webpki-roots = "0.26"
+flate2 = { workspace = true }
+byteorder = { workspace = true }
+brotli = { workspace = true }
+openssl = { workspace = true, optional = true, features = ["vendored"] }
+native-tls = { workspace = true, optional = true }
+
+# Protocol Buffers
+prost = { workspace = true }
+
+[features]
+default = ["tls-native-fallback"]
+native-tls = ["dep:native-tls", "tokio-tungstenite/native-tls"]
+rustls-tls = ["tokio-tungstenite/rustls-tls-native-roots"]
+# Enable both backends so we can pick per-host at runtime.
+tls-native-fallback = ["native-tls", "rustls-tls"]
