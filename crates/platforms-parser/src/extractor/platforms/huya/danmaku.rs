@@ -471,7 +471,7 @@ mod tests {
         // We construct a trivial binary that decodes to msg_type = 0.
         let mut ser = tars_codec::ser::TarsSerializer::new();
         ser.write_i32(0, 0).unwrap(); // tag 0 = msg_type 0
-        ser.write_simple_list(1, &[]); // tag 1 = empty data
+        let _ = ser.write_simple_list(1, &[]); // tag 1 = empty data
         let data = ser.into_bytes();
 
         let items = decode_huya_frame(&data).unwrap();

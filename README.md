@@ -34,12 +34,12 @@ slive-core-api-rust/
 ## Usage
 
 ```rust
-use platforms_parser::extractor::LiveExtractor;
-use platforms_parser::extractor::platforms::bilibili::BilibiliExtractor;
+use platforms_parser::extractor::{ExtractorRegistry, create_extractor};
 
 #[tokio::main]
 async fn main() {
-    let ext = BilibiliExtractor::new();
+    // By platform ID
+    let ext = create_extractor("bilibili").unwrap();
     ext.set_cookies("SESSDATA=...");
 
     let detail = ext.get_room_detail("6").await.unwrap();
@@ -48,6 +48,11 @@ async fn main() {
     let qualities = ext.get_play_qualities(&detail).await.unwrap();
     let urls = ext.get_play_urls(&detail, &qualities[0]).await.unwrap();
     println!("Play URL: {}", urls.urls[0]);
+
+    // By URL
+    let registry = ExtractorRegistry::with_defaults();
+    let ext = registry.get_by_url("https://www.huya.com/12345").unwrap();
+    println!("Platform: {}", ext.name());
 }
 ```
 
@@ -59,8 +64,6 @@ This library was built through an iterative AI development process:
 - **Architecture design** — Shared HttpClient, trait-based extractor/provider pattern, generic WebSocket framework
 - **Code quality** — Zero warnings, 77+ passing unit tests, clean separation of concerns
 - **Refactoring** — Extracted shared HTTP client from 5 platform-specific implementations, unified error handling
-
-Built with [Claude](https://claude.ai) by Anthropic.
 
 ## License
 

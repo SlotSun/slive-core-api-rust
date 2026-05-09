@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -7,6 +8,14 @@ use tracing::warn;
 
 use crate::extractor::error::ExtractorError;
 use crate::extractor::live_extractor::Result;
+
+/// Ensure a rustls crypto provider is installed (once per process).
+fn ensure_crypto_provider() {
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
 
 /// Default connect timeout.
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -280,6 +289,7 @@ impl HttpClientBuilder {
 
     /// Build the [`HttpClient`].
     pub fn build(self) -> Result<HttpClient> {
+        ensure_crypto_provider();
         let client = Client::builder()
             .user_agent(&self.user_agent)
             .connect_timeout(self.connect_timeout)
