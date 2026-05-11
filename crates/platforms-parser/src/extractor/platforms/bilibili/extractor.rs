@@ -382,6 +382,13 @@ fn str_field_nonempty(v: &JsonValue, key: &str) -> Option<String> {
     }
 }
 
+/// Extract a JSON field as a String, handling both string and integer values.
+fn json_str_or_int(v: &JsonValue, key: &str) -> String {
+    v.get(key)
+        .and_then(|val| val.as_str().map(String::from).or_else(|| val.as_u64().map(|n| n.to_string())))
+        .unwrap_or_default()
+}
+
 /// Percent-encode a string for URL use.
 #[allow(dead_code)]
 fn url_encode(s: &str) -> String {
@@ -468,12 +475,12 @@ impl LiveExtractor for BilibiliExtractor {
             let mut sub_categories = Vec::new();
             if let Some(list) = area.get("list").and_then(|v| v.as_array()) {
                 for item in list {
-                    let sub_id = str_field(item, "id");
+                    let sub_id = json_str_or_int(item, "id");
                     let sub_name = str_field(item, "name");
-                    let parent_id = item
-                        .get("parent_id")
-                        .and_then(|v| v.as_str())
-                        .map(|v| v.to_string());
+                    let parent_id = {
+                        let s = json_str_or_int(item, "parent_id");
+                        if s.is_empty() { None } else { Some(s) }
+                    };
                     let pic_raw = item
                         .get("pic")
                         .and_then(|v| v.as_str())
