@@ -17,6 +17,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::sync::OnceCell;
+use url::form_urlencoded;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -26,6 +27,9 @@ const PLATFORM_ID: &str = "douyin";
 const PLATFORM_NAME: &str = "抖音";
 
 const BASE_URL: &str = "https://live.douyin.com";
+
+/// User-Agent matching Dart `DouyinRequestParams.kDefaultUserAgent`.
+const DOUYIN_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0";
 
 /// Room enter API base URL — parameters are added at call time.
 const ROOM_ENTER_URL: &str = "https://live.douyin.com/webcast/room/web/enter/";
@@ -68,10 +72,11 @@ pub struct DouyinExtractor {
 
 impl DouyinExtractor {
     pub fn new() -> Self {
-        let abogus = ABogus::new(None, Some(crate::USER_AGENT), None);
+        let abogus = ABogus::new(None, Some(DOUYIN_USER_AGENT), None);
 
         Self {
             http: HttpClient::builder()
+                .user_agent(DOUYIN_USER_AGENT)
                 .build()
                 .expect("failed to build HTTP client"),
             room_url_re: Regex::new(r"(?:https?://)?(?:www\.)?live\.douyin\.com/(\d+)").unwrap(),
@@ -372,21 +377,76 @@ impl DouyinExtractor {
 
     /// Debug: fetch raw search response as string.
     pub async fn search_rooms_debug(&self, keyword: &str) -> Result<String> {
-        let encoded_kw =
-            percent_encoding::utf8_percent_encode(keyword, percent_encoding::NON_ALPHANUMERIC)
+        let params = [
+            ("device_platform", "webapp"),
+            ("aid", "6383"),
+            ("channel", "channel_pc_web"),
+            ("search_channel", "aweme_live"),
+            ("keyword", keyword),
+            ("search_source", "switch_tab"),
+            ("query_correct_type", "1"),
+            ("is_filter_search", "0"),
+            ("from_group_id", ""),
+            ("offset", "0"),
+            ("count", "10"),
+            ("pc_client_type", "1"),
+            ("version_code", "170400"),
+            ("version_name", "17.4.0"),
+            ("cookie_enabled", "true"),
+            ("screen_width", "1980"),
+            ("screen_height", "1080"),
+            ("browser_language", "zh-CN"),
+            ("browser_platform", "Win32"),
+            ("browser_name", "Edge"),
+            ("browser_version", "125.0.0.0"),
+            ("browser_online", "true"),
+            ("engine_name", "Blink"),
+            ("engine_version", "125.0.0.0"),
+            ("os_name", "Windows"),
+            ("os_version", "10"),
+            ("cpu_core_num", "12"),
+            ("device_memory", "8"),
+            ("platform", "PC"),
+            ("downlink", "10"),
+            ("effective_type", "4g"),
+            ("round_trip_time", "100"),
+            ("webid", "7382872326016435738"),
+        ];
+        let url =
+            url::Url::parse_with_params(SEARCH_ROOMS_URL, params.iter().map(|(k, v)| (*k, *v)))
+                .map_err(|e| ExtractorError::Other(format!("URL build error: {e}")))?
                 .to_string();
-        let mut params = HashMap::new();
-        params.insert("channel", "channel_pc_web");
-        params.insert("search_channel", "aweme_live");
-        params.insert("keyword", encoded_kw.as_str());
-        params.insert("search_source", "switch_tab");
-        params.insert("query_correct_type", "1");
-        params.insert("is_filter_search", "0");
-        params.insert("offset", "0");
-        params.insert("count", "10");
-        let url = self.build_signed_url(SEARCH_ROOMS_URL, &params);
-        let headers = self.request_headers().await;
-        self.http.get_text_with_headers(&url, &headers).await
+        let ttwid = self.ensure_ttwid().await;
+        let auth = self.auth_cookies.lock().unwrap().clone();
+        let cookie = match auth {
+            Some(ref auth) => format!("ttwid={ttwid}; {auth}"),
+            None => format!("ttwid={ttwid}"),
+        };
+        let referer = format!(
+            "https://www.douyin.com/search/{}?type=live",
+            form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>()
+        );
+        let client = self.http.inner();
+        let resp = client
+            .get(&url)
+            .header("accept", "application/json, text/plain, */*")
+            .header("accept-language", "zh-CN,zh;q=0.9,en;q=0.8")
+            .header("cookie", &cookie)
+            .header("priority", "u=1, i")
+            .header("referer", &referer)
+            .header(
+                "sec-ch-ua",
+                r#""Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24""#,
+            )
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", r#""Windows""#)
+            .header("sec-fetch-dest", "empty")
+            .header("sec-fetch-mode", "cors")
+            .header("sec-fetch-site", "same-origin")
+            .send()
+            .await
+            .map_err(|e| ExtractorError::HttpError(e))?;
+        resp.text().await.map_err(|e| ExtractorError::HttpError(e))
     }
 }
 
@@ -521,24 +581,97 @@ impl LiveExtractor for DouyinExtractor {
     }
 
     async fn search_rooms(&self, keyword: &str, page: u32) -> Result<LiveSearchRoomResult> {
-        let offset = (page.saturating_sub(1)) * 10;
-        let offset_str = offset.to_string();
-        let encoded_kw =
-            percent_encoding::utf8_percent_encode(keyword, percent_encoding::NON_ALPHANUMERIC)
-                .to_string();
-        let count_str = "10";
-        let mut params = HashMap::new();
-        params.insert("channel", "channel_pc_web");
-        params.insert("search_channel", "aweme_live");
-        params.insert("keyword", &encoded_kw);
-        params.insert("search_source", "switch_tab");
-        params.insert("query_correct_type", "1");
-        params.insert("is_filter_search", "0");
-        params.insert("offset", &offset_str);
-        params.insert("count", count_str);
-        let url = self.build_signed_url(SEARCH_ROOMS_URL, &params);
+        // NOTE: This endpoint does NOT use ABogus signing (matching Dart).
+        let offset = ((page.saturating_sub(1)) * 10).to_string();
 
-        let json = self.fetch_json(&url).await?;
+        // Build URL with all params matching Dart's searchRooms.
+        // Use url::Url::parse_with_params to encode query params (matching Dart Uri.replace).
+        let url = {
+            let params = [
+                ("device_platform", "webapp"),
+                ("aid", "6383"),
+                ("channel", "channel_pc_web"),
+                ("search_channel", "aweme_live"),
+                ("keyword", keyword),
+                ("search_source", "switch_tab"),
+                ("query_correct_type", "1"),
+                ("is_filter_search", "0"),
+                ("from_group_id", ""),
+                ("offset", &offset),
+                ("count", "10"),
+                ("pc_client_type", "1"),
+                ("version_code", "170400"),
+                ("version_name", "17.4.0"),
+                ("cookie_enabled", "true"),
+                ("screen_width", "1980"),
+                ("screen_height", "1080"),
+                ("browser_language", "zh-CN"),
+                ("browser_platform", "Win32"),
+                ("browser_name", "Edge"),
+                ("browser_version", "125.0.0.0"),
+                ("browser_online", "true"),
+                ("engine_name", "Blink"),
+                ("engine_version", "125.0.0.0"),
+                ("os_name", "Windows"),
+                ("os_version", "10"),
+                ("cpu_core_num", "12"),
+                ("device_memory", "8"),
+                ("platform", "PC"),
+                ("downlink", "10"),
+                ("effective_type", "4g"),
+                ("round_trip_time", "100"),
+                ("webid", "7382872326016435738"),
+            ];
+            url::Url::parse_with_params(SEARCH_ROOMS_URL, params.iter().map(|(k, v)| (*k, *v)))
+                .map_err(|e| ExtractorError::Other(format!("URL build error: {e}")))?
+                .to_string()
+        };
+
+        // Build search-specific headers matching Dart.
+        let referer = format!(
+            "https://www.douyin.com/search/{}?type=live",
+            form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>()
+        );
+        let cookie = {
+            let ttwid = self.ensure_ttwid().await;
+            let auth = self.auth_cookies.lock().unwrap().clone();
+            match auth {
+                Some(ref auth) => format!("ttwid={ttwid}; {auth}"),
+                None => format!("ttwid={ttwid}"),
+            }
+        };
+
+        // Use raw reqwest with all headers matching Dart's searchRooms.
+        // This endpoint does NOT use ABogus signing.
+        let client = self.http.inner();
+        let resp = client
+            .get(&url)
+            .header("accept", "application/json, text/plain, */*")
+            .header("accept-language", "zh-CN,zh;q=0.9,en;q=0.8")
+            .header("cookie", &cookie)
+            .header("priority", "u=1, i")
+            .header("referer", &referer)
+            .header(
+                "sec-ch-ua",
+                r#""Microsoft Edge";v="125", "Chromium";v="125", "Not.A/Brand";v="24""#,
+            )
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", r#""Windows""#)
+            .header("sec-fetch-dest", "empty")
+            .header("sec-fetch-mode", "cors")
+            .header("sec-fetch-site", "same-origin")
+            .send()
+            .await
+            .map_err(|e| ExtractorError::HttpError(e))?;
+
+        let text = resp.text().await.map_err(|e| ExtractorError::HttpError(e))?;
+        if text.is_empty() || text == "blocked" {
+            return Err(ExtractorError::Other(
+                "抖音直播搜索被限制，请稍后再试".into(),
+            ));
+        }
+        let json: JsonValue =
+            serde_json::from_str(&text).map_err(ExtractorError::JsonError)?;
 
         let empty = vec![];
         let items_arr = json

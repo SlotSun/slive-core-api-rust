@@ -203,7 +203,8 @@ async fn test_search_rooms() {
 async fn test_search_anchors() {
     ensure_tls_provider();
     let ext = BilibiliExtractor::new();
-    match ext.search_anchors("英雄联盟", 1).await {
+    ext.set_cookies(common::bilibili_cookies());
+    match ext.search_anchors("阳光男孩小丑熊", 1).await {
         Ok(result) => {
             println!("=== 搜索主播 ===");
             println!(

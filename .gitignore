@@ -2,3 +2,15 @@
 .claude/
 .idea/
 test_cookies.json
+
+# Secrets & credentials
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+secret.json
+service-account*.json

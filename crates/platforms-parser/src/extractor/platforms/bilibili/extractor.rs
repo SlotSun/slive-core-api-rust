@@ -554,6 +554,7 @@ impl LiveExtractor for BilibiliExtractor {
             .get("data")
             .ok_or_else(|| ExtractorError::Other("missing data in search result".into()))?;
 
+
         let result = data
             .get("result")
             .and_then(|v| v.as_array())
@@ -564,14 +565,24 @@ impl LiveExtractor for BilibiliExtractor {
         let items: Vec<LiveAnchorItem> = result
             .iter()
             .filter_map(|item| {
-                let user_id = item.get("mid").and_then(|v| v.as_u64())?.to_string();
+                let user_id = item
+                    .get("uid")
+                    .or_else(|| item.get("mid"))
+                    .and_then(|v| v.as_u64())
+                    .filter(|&v| v > 0)
+                    .map(|v| v.to_string())?;
                 let uname_raw = str_field(item, "uname");
                 let user_name = em_re.replace_all(&uname_raw, "").to_string();
                 let uface = str_field(item, "uface");
-                let user_avatar = if uface.starts_with("//") {
-                    format!("https:{}", uface)
+                let user_avatar = if uface.is_empty() {
+                    String::new()
                 } else {
-                    uface
+                    let base = if uface.starts_with("//") {
+                        format!("https:{}", uface)
+                    } else {
+                        uface
+                    };
+                    format!("{}@400w.jpg", base)
                 };
                 let room_id = item
                     .get("roomid")
@@ -579,7 +590,12 @@ impl LiveExtractor for BilibiliExtractor {
                     .and_then(|v| v.as_u64())
                     .filter(|&v| v > 0)
                     .map(|v| v.to_string());
-                let is_live = item.get("is_live").and_then(|v| v.as_i64()).unwrap_or(0) != 0;
+                let is_live = item
+                    .get("is_live")
+                    .map(|v| {
+                        v.as_bool().unwrap_or_else(|| v.as_i64().unwrap_or(0) != 0)
+                    })
+                    .unwrap_or(false);
 
                 Some(LiveAnchorItem {
                     user_id,
