@@ -398,6 +398,12 @@ This library was built through an iterative AI development process (AI model: **
 
 项目结构和部分代码参考了 [rust-srec](https://github.com/hua0512/rust-srec)
 
+## Flutter / Dart Binding
+
+A Flutter FFI plugin wrapping this library is available at:
+
+**[slive_core](https://github.com/SlotSun/slive_core)** — Flutter plugin via `flutter_rust_bridge`
+
 ## License
 
 [MIT](LICENSE)
