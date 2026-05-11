@@ -678,20 +678,14 @@ impl BilibiliDanmuProvider {
     async fn fetch_danmu_info(&self, room_id: u64) -> Result<(String, Vec<(String, u16)>)> {
         self.ensure_buvid().await?;
 
-        // Build the full URL with params (same as Dart).
+        // Build params and sign using WBI algorithm.
         let base = "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo";
-        let params = vec![
-            ("id".to_string(), room_id.to_string()),
-        ];
-        let query: String = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        let url_with_params = format!("{}?{}", base, query);
+        let params: std::collections::HashMap<String, String> =
+            vec![("id".to_string(), room_id.to_string())]
+                .into_iter()
+                .collect();
 
-        // Sign using the Dart-ported WBI algorithm.
-        let signed_params = wbi::sign_url(&self.http, Some(&self.http.cookies()), &url_with_params)
+        let signed_params = wbi::sign_params(&self.http, Some(&self.http.cookies()), params)
             .await
             .map_err(|e| DanmakuError::connection(format!("Failed to sign WBI: {e}")))?;
 

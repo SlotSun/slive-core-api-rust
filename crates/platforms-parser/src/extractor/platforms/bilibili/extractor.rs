@@ -1,5 +1,6 @@
 //! Bilibili (哔哩哔哩) live streaming platform extractor.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -25,6 +26,7 @@ const PLATFORM_NAME: &str = "哔哩哔哩";
 const BASE_URL: &str = "https://live.bilibili.com";
 
 const CATEGORIES_URL: &str = "https://api.live.bilibili.com/room/v1/Area/getList";
+#[allow(dead_code)]
 const CATEGORY_ROOMS_URL: &str = "https://api.live.bilibili.com/xlive/web-interface/v1/second/getList?platform=web&parent_area_id={parent_id}&area_id={area_id}&page={page}";
 const RECOMMEND_ROOMS_URL: &str =
     "https://api.live.bilibili.com/xlive/web-interface/v1/webMain/getList?page={page}";
@@ -126,8 +128,6 @@ impl BilibiliExtractor {
             .map(|m| m.as_str().replace('\\', ""))
             .unwrap_or_default();
 
-        debug!(access_id = %access_id, resp_len = resp.len(), "get_access_id result");
-
         let mut cached = self.access_id.lock().unwrap();
         *cached = access_id.clone();
         Ok(access_id)
@@ -208,29 +208,22 @@ impl BilibiliExtractor {
     /// Perform a WBI-signed GET request to Bilibili API.
     ///
     /// `base_url` is the endpoint without query parameters.
-    /// `extra_params` are the query parameters to sign.
+    /// `params` are the query parameters to sign (decoded values).
     async fn wbi_get(
         &self,
         base_url: &str,
         params: Vec<(String, String)>,
     ) -> Result<JsonValue> {
-        // Build the full URL with query params (same as Dart builds the url string).
-        let query: String = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        let url_with_params = format!("{}?{}", base_url, query);
+        // 把 params Vec 转为 HashMap
+        let params_map: HashMap<String, String> = params.into_iter().collect();
 
-        // Sign using the Dart-ported WBI algorithm.
+        // 直接用参数 map 签名，不经过 URL encode/decode round-trip
         let signed_params =
-            wbi::sign_url(&self.http, Some(&self.http.cookies()), &url_with_params).await?;
+            wbi::sign_params(&self.http, Some(&self.http.cookies()), params_map).await?;
 
         // Build final URL from base_url + signed params.
         let final_query = wbi::encode_query_string(&signed_params);
         let url = format!("{}?{}", base_url, final_query);
-        eprintln!("[DEBUG] wbi_get final URL: {}", url);
-        eprintln!("[DEBUG] wbi_get cookies: {}", self.http.cookies());
         self.fetch_json(&url).await
     }
 
@@ -358,6 +351,7 @@ fn str_field_nonempty(v: &JsonValue, key: &str) -> Option<String> {
 }
 
 /// Percent-encode a string for URL use.
+#[allow(dead_code)]
 fn url_encode(s: &str) -> String {
     let mut encoded = String::with_capacity(s.len());
     for c in s.chars() {
@@ -392,7 +386,22 @@ impl LiveExtractor for BilibiliExtractor {
     }
 
     fn set_cookies(&self, cookies: &str) {
-        self.http.set_cookies(cookies);
+        if cookies.is_empty() {
+            return;
+        }
+        if cookies.contains("buvid3") {
+            self.http.set_cookies(cookies);
+        } else {
+            let buvid3 = self.buvid3.lock().unwrap().clone();
+            let buvid4 = self.buvid4.lock().unwrap().clone();
+            if buvid3.is_empty() {
+                // buvid 还没获取，先直接设置，ensure_buvid 会在请求时补充
+                self.http.set_cookies(cookies);
+            } else {
+                self.http
+                    .set_cookies(&format!("{};buvid3={};buvid4={}", cookies, buvid3, buvid4));
+            }
+        }
     }
 
     fn supports_url(&self, url: &str) -> bool {

@@ -91,6 +91,9 @@ async fn test_get_sub_categories() {
         })
         .expect("should have at least one real sub-category");
 
+    // getList 端点需要登录 cookie
+    ext.set_cookies(common::bilibili_cookies());
+
     println!(
         "\n=== 获取子分类房间: {} (id={}) ===",
         first_sub.name, first_sub.id
