@@ -82,7 +82,7 @@ impl BilibiliExtractor {
 
     /// Fetch a URL and deserialize the response as JSON.
     async fn fetch_json(&self, url: &str) -> Result<JsonValue> {
-        self.ensure_buvid().await?;
+        self.ensure_buvid().await;
         self.http.get_json(url).await
     }
 
@@ -137,22 +137,47 @@ impl BilibiliExtractor {
     ///
     /// Equivalent to Dart's `getBuvid()`. These cookies are required for
     /// all API requests to avoid -352 risk control errors.
-    async fn ensure_buvid(&self) -> Result<()> {
+    ///
+    /// If the SPI endpoint fails (e.g. -352), the error is logged but not
+    /// propagated — the extractor can still work without buvid when valid
+    /// user cookies (SESSDATA) are present.
+    async fn ensure_buvid(&self) {
         {
             let b3 = self.buvid3.lock().unwrap();
             if !b3.is_empty() {
-                return Ok(());
+                return;
             }
         }
 
-        let json: JsonValue = self
+        let result: Result<JsonValue> = self
             .http
             .get_json("https://api.bilibili.com/x/frontend/finger/spi")
-            .await?;
+            .await;
 
-        let data = json.get("data").ok_or_else(|| {
-            ExtractorError::Other("missing data in buvid response".into())
-        })?;
+        let json = match result {
+            Ok(j) => j,
+            Err(e) => {
+                warn!("Failed to fetch buvid from SPI: {}", e);
+                // Mark as attempted so we don't retry every request.
+                let mut b3 = self.buvid3.lock().unwrap();
+                if b3.is_empty() {
+                    *b3 = "_failed".to_string();
+                }
+                return;
+            }
+        };
+
+        let data = match json.get("data") {
+            Some(d) => d,
+            None => {
+                warn!("Missing data in buvid SPI response");
+                let mut b3 = self.buvid3.lock().unwrap();
+                if b3.is_empty() {
+                    *b3 = "_failed".to_string();
+                }
+                return;
+            }
+        };
 
         let b3 = data
             .get("b_3")
@@ -164,6 +189,15 @@ impl BilibiliExtractor {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+
+        if b3.is_empty() {
+            warn!("SPI returned empty buvid3");
+            let mut cached = self.buvid3.lock().unwrap();
+            if cached.is_empty() {
+                *cached = "_failed".to_string();
+            }
+            return;
+        }
 
         {
             let mut cached3 = self.buvid3.lock().unwrap();
@@ -183,8 +217,6 @@ impl BilibiliExtractor {
             self.http
                 .set_cookies(&format!("{};buvid3={};buvid4={}", existing, b3, b4));
         }
-
-        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -394,8 +426,8 @@ impl LiveExtractor for BilibiliExtractor {
         } else {
             let buvid3 = self.buvid3.lock().unwrap().clone();
             let buvid4 = self.buvid4.lock().unwrap().clone();
-            if buvid3.is_empty() {
-                // buvid 还没获取，先直接设置，ensure_buvid 会在请求时补充
+            if buvid3.is_empty() || buvid3 == "_failed" {
+                // buvid 还没获取或获取失败，先直接设置
                 self.http.set_cookies(cookies);
             } else {
                 self.http
