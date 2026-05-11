@@ -53,6 +53,64 @@ async fn test_get_categories() {
 }
 
 #[tokio::test]
+async fn test_get_sub_categories() {
+    ensure_tls_provider();
+    let ext = BilibiliExtractor::new();
+    let categories = ext.get_categories().await.expect("get_categories failed");
+
+    println!("=== Bilibili 子分类 ===");
+    let mut total_subs = 0;
+    let mut with_pic = 0;
+    for cat in &categories {
+        for sub in &cat.sub_categories {
+            total_subs += 1;
+            if sub.pic.is_some() {
+                with_pic += 1;
+            }
+            if total_subs <= 10 {
+                println!(
+                    "  [{}] {} (parent={}, pic={})",
+                    sub.id,
+                    sub.name,
+                    sub.parent_id.as_deref().unwrap_or("?"),
+                    sub.pic.as_deref().unwrap_or("None"),
+                );
+            }
+        }
+    }
+    println!("  总计: {} 子分类, {} 有图片", total_subs, with_pic);
+    assert!(total_subs > 0, "should have sub-categories");
+
+    // Pick the first real sub-category (skip id="0" "全部" entries) and fetch its rooms.
+    let first_sub = categories
+        .iter()
+        .find_map(|c| {
+            c.sub_categories
+                .iter()
+                .find(|s| s.id != "0")
+        })
+        .expect("should have at least one real sub-category");
+
+    println!(
+        "\n=== 获取子分类房间: {} (id={}) ===",
+        first_sub.name, first_sub.id
+    );
+    match ext.get_category_rooms(first_sub, 1).await {
+        Ok(result) => {
+            println!("  房间数: {} (has_more={})", result.items.len(), result.has_more);
+            for item in result.items.iter().take(5) {
+                println!(
+                    "  - [{}] {} ({} 在线)",
+                    item.room_id, item.user_name, item.online
+                );
+            }
+            assert!(!result.items.is_empty(), "sub-category should have rooms");
+        }
+        Err(e) => println!("  ⚠️ 获取子分类房间失败: {}", e),
+    }
+}
+
+#[tokio::test]
 async fn test_get_room_detail() {
     ensure_tls_provider();
     let ext = BilibiliExtractor::new();

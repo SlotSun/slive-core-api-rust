@@ -62,6 +62,7 @@ native-tls = { workspace = true, optional = true }
 
 # Protocol Buffers
 prost = { workspace = true }
+http-client = "6.5.3"
 
 [features]
 default = ["tls-native-fallback"]

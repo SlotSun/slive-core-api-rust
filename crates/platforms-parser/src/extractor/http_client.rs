@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -26,11 +26,19 @@ const DEFAULT_MAX_RETRIES: u32 = 3;
 /// Base delay between retries (exponential backoff).
 const DEFAULT_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 
+/// Stored builder configuration so the client can be rebuilt with a new user-agent.
+struct BuilderConfig {
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    default_headers: HeaderMap,
+}
+
 /// A shared HTTP client with cookie management, default headers, timeouts, and
 /// automatic retry for transient errors.
 pub struct HttpClient {
-    client: Client,
-    cookies: std::sync::Mutex<String>,
+    client: RwLock<Client>,
+    cookies: Mutex<String>,
+    builder_config: BuilderConfig,
 }
 
 impl HttpClient {
@@ -49,9 +57,26 @@ impl HttpClient {
         self.cookies.lock().unwrap().clone()
     }
 
+    /// Replace the inner `reqwest::Client` with one using a different user-agent.
+    ///
+    /// Preserves connect timeout, read timeout, and default headers from the
+    /// original builder configuration.
+    pub fn set_user_agent(&self, ua: &str) -> Result<()> {
+        ensure_crypto_provider();
+        let new_client = Client::builder()
+            .user_agent(ua)
+            .connect_timeout(self.builder_config.connect_timeout)
+            .timeout(self.builder_config.read_timeout)
+            .default_headers(self.builder_config.default_headers.clone())
+            .build()
+            .map_err(ExtractorError::HttpError)?;
+        *self.client.write().unwrap() = new_client;
+        Ok(())
+    }
+
     /// Get a reference to the inner `reqwest::Client` for advanced use cases.
-    pub fn inner(&self) -> &Client {
-        &self.client
+    pub fn inner(&self) -> Client {
+        self.client.read().unwrap().clone()
     }
 
     // ------------------------------------------------------------------
@@ -60,7 +85,9 @@ impl HttpClient {
 
     /// GET request returning response text.
     pub async fn get_text(&self, url: &str) -> Result<String> {
-        let resp = self.execute_with_retry(|| self.client.get(url)).await?;
+        let resp = self
+            .execute_with_retry(|| self.attach_cookies(self.client.read().unwrap().get(url)))
+            .await?;
         Ok(resp.text().await?)
     }
 
@@ -88,7 +115,7 @@ impl HttpClient {
     ) -> Result<String> {
         let resp = self
             .execute_with_retry(|| {
-                let mut req = self.client.get(url);
+                let mut req = self.client.read().unwrap().get(url);
                 req = self.attach_cookies(req);
                 for (key, value) in extra_headers.iter() {
                     req = req.header(key.clone(), value.clone());
@@ -107,7 +134,7 @@ impl HttpClient {
     ) -> Result<String> {
         let resp = self
             .execute_with_retry(|| {
-                let req = self.client.post(url);
+                let req = self.client.read().unwrap().post(url);
                 self.attach_cookies(req).form(form)
             })
             .await?;
@@ -125,14 +152,10 @@ impl HttpClient {
     }
 
     /// POST with JSON body, returning response text.
-    pub async fn post_json_text<B: serde::Serialize>(
-        &self,
-        url: &str,
-        body: &B,
-    ) -> Result<String> {
+    pub async fn post_json_text<B: serde::Serialize>(&self, url: &str, body: &B) -> Result<String> {
         let resp = self
             .execute_with_retry(|| {
-                let req = self.client.post(url);
+                let req = self.client.read().unwrap().post(url);
                 self.attach_cookies(req).json(body)
             })
             .await?;
@@ -153,18 +176,18 @@ impl HttpClient {
     /// and default headers already attached. The caller can add more headers
     /// or body before calling `.send()`.
     pub fn request(&self, method: Method, url: &str) -> reqwest::RequestBuilder {
-        let req = self.client.request(method, url);
+        let req = self.client.read().unwrap().request(method, url);
         self.attach_cookies(req)
     }
 
     /// Convenience: build a GET request with cookies attached.
     pub fn get(&self, url: &str) -> reqwest::RequestBuilder {
-        self.attach_cookies(self.client.get(url))
+        self.attach_cookies(self.client.read().unwrap().get(url))
     }
 
     /// Convenience: build a POST request with cookies attached.
     pub fn post(&self, url: &str) -> reqwest::RequestBuilder {
-        self.attach_cookies(self.client.post(url))
+        self.attach_cookies(self.client.read().unwrap().post(url))
     }
 
     // ------------------------------------------------------------------
@@ -294,13 +317,18 @@ impl HttpClientBuilder {
             .user_agent(&self.user_agent)
             .connect_timeout(self.connect_timeout)
             .timeout(self.read_timeout)
-            .default_headers(self.default_headers)
+            .default_headers(self.default_headers.clone())
             .build()
             .map_err(ExtractorError::HttpError)?;
 
         Ok(HttpClient {
-            client,
-            cookies: std::sync::Mutex::new(String::new()),
+            client: RwLock::new(client),
+            cookies: Mutex::new(String::new()),
+            builder_config: BuilderConfig {
+                connect_timeout: self.connect_timeout,
+                read_timeout: self.read_timeout,
+                default_headers: self.default_headers,
+            },
         })
     }
 }

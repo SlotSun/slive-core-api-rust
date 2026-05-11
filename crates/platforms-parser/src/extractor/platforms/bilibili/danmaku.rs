@@ -27,6 +27,8 @@ use serde_json::Value as JsonValue;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
@@ -46,7 +48,7 @@ use crate::extractor::platforms::bilibili::wbi;
 const DEFAULT_WS_URL: &str = "wss://broadcastlv.chat.bilibili.com/sub";
 
 /// Interval between heartbeat packets.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Maximum time `receive` will wait for a message before returning `Ok(None)`.
 const RECEIVE_TIMEOUT: Duration = Duration::from_millis(100);
@@ -90,11 +92,12 @@ fn encode_packet(operation: u32, proto_ver: u16, body: &[u8]) -> Vec<u8> {
 ///
 /// When `uid` is 0 the connection is anonymous.  Set `uid` to the user's
 /// `DedeUserID` from the cookie when using an authenticated session.
-fn build_auth_packet(room_id: u64, token: &str, uid: u64) -> Vec<u8> {
+fn build_auth_packet(room_id: u64, token: &str, uid: u64, buvid: &str) -> Vec<u8> {
     let body = serde_json::json!({
         "uid": uid,
         "roomid": room_id,
         "protover": 3,
+        "buvid": buvid,
         "platform": "web",
         "type": 2,
         "key": token
@@ -334,6 +337,26 @@ fn parse_super_chat_message(json: &JsonValue) -> Option<DanmuMessage> {
     let price = data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let keep_time = data.get("time").and_then(|v| v.as_u64()).unwrap_or(0);
 
+    let face_raw = user_info
+        .get("face")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let face = if face_raw.is_empty() {
+        String::new()
+    } else {
+        format!("{face_raw}@200w.jpg")
+    };
+    let bg_color = data
+        .get("background_color")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let bg_bottom_color = data
+        .get("background_bottom_color")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let msg = DanmuMessage::super_chat(
         id.to_string(),
         uid.to_string(),
@@ -342,7 +365,10 @@ fn parse_super_chat_message(json: &JsonValue) -> Option<DanmuMessage> {
         price as u64,
     )
     .with_super_chat_keep_time(keep_time)
-    .with_metadata("price_exact", serde_json::json!(price));
+    .with_metadata("price_exact", serde_json::json!(price))
+    .with_metadata("face", serde_json::json!(face))
+    .with_metadata("background_color", serde_json::json!(bg_color))
+    .with_metadata("background_bottom_color", serde_json::json!(bg_bottom_color));
 
     Some(msg)
 }
@@ -435,11 +461,21 @@ async fn run_bilibili_ws_task(
     token: String,
     ws_url: String,
     uid: u64,
+    buvid: String,
+    cookies: String,
     message_tx: mpsc::Sender<DanmuItem>,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) {
     // --- Connect ----------------------------------------------------------
-    let ws_stream = match tokio::time::timeout(CONNECT_TIMEOUT, connect_async(&ws_url)).await {
+    let mut request = ws_url.into_client_request()
+        .expect("failed to build WebSocket request");
+    if !cookies.is_empty() {
+        request.headers_mut().insert(
+            "Cookie",
+            http::HeaderValue::from_str(&cookies).unwrap_or(http::HeaderValue::from_static("")),
+        );
+    }
+    let ws_stream = match tokio::time::timeout(CONNECT_TIMEOUT, connect_async(request)).await {
         Ok(Ok((stream, _response))) => stream,
         Ok(Err(e)) => {
             error!("Failed to connect to Bilibili WebSocket: {e}");
@@ -455,7 +491,7 @@ async fn run_bilibili_ws_task(
     info!(room_id = room_id, "Connected to Bilibili WebSocket");
 
     // --- Auth -------------------------------------------------------------
-    let auth_packet = build_auth_packet(room_id, &token, uid);
+    let auth_packet = build_auth_packet(room_id, &token, uid, &buvid);
     if let Err(e) = ws_sink
         .send(Message::Binary(Bytes::from(auth_packet)))
         .await
@@ -608,34 +644,60 @@ impl BilibiliDanmuProvider {
             .ok_or_else(|| DanmakuError::protocol("room_init: missing room_id".to_string()))
     }
 
+    /// Ensure the cookie string contains `buvid3`/`buvid4` (required for WBI-signed endpoints).
+    async fn ensure_buvid(&self) -> Result<()> {
+        let cookies = self.http.cookies();
+        if cookies.contains("buvid3=") {
+            return Ok(());
+        }
+        let url = "https://api.bilibili.com/x/frontend/finger/spi";
+        let resp = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| DanmakuError::connection(format!("ensure_buvid request failed: {e}")))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| DanmakuError::connection(format!("ensure_buvid read failed: {e}")))?;
+        let json: JsonValue = serde_json::from_str(&text)
+            .map_err(|e| DanmakuError::protocol(format!("ensure_buvid json error: {e}")))?;
+        let b3 = json.pointer("/data/b_3").and_then(|v| v.as_str()).unwrap_or("");
+        let b4 = json.pointer("/data/b_4").and_then(|v| v.as_str()).unwrap_or("");
+        if !b3.is_empty() {
+            let sep = if cookies.is_empty() { "" } else { ";" };
+            self.http.set_cookies(&format!("{}{}buvid3={};buvid4={}", cookies, sep, b3, b4));
+        }
+        Ok(())
+    }
+
     /// Fetch danmu token and host list from the `getDanmuInfo` API.
     ///
     /// Uses WBI signing for the request.
     async fn fetch_danmu_info(&self, room_id: u64) -> Result<(String, Vec<(String, u16)>)> {
-        // Build params for WBI signing
-        let mut params = vec![
+        self.ensure_buvid().await?;
+
+        // Build the full URL with params (same as Dart).
+        let base = "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo";
+        let params = vec![
             ("id".to_string(), room_id.to_string()),
-            ("type".to_string(), "0".to_string()),
-            ("web_location".to_string(), "444.8".to_string()),
         ];
-
-        // Get WBI keys and sign the params
-        let (img_key, sub_key) = wbi::get_wbi_keys(&self.http, Some(&self.http.cookies()))
-            .await
-            .map_err(|e| DanmakuError::connection(format!("Failed to get WBI keys: {e}")))?;
-        wbi::encode_wbi(&mut params, &img_key, &sub_key);
-
-        // Build query string
         let query: String = params
             .iter()
             .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
             .collect::<Vec<_>>()
             .join("&");
+        let url_with_params = format!("{}?{}", base, query);
 
-        let url = format!(
-            "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?{}",
-            query
-        );
+        // Sign using the Dart-ported WBI algorithm.
+        let signed_params = wbi::sign_url(&self.http, Some(&self.http.cookies()), &url_with_params)
+            .await
+            .map_err(|e| DanmakuError::connection(format!("Failed to sign WBI: {e}")))?;
+
+        // Build final URL.
+        let final_query = wbi::encode_query_string(&signed_params);
+        let url = format!("{}?{}", base, final_query);
 
         debug!(url = %url, "getDanmuInfo WBI-signed request");
 
@@ -717,8 +779,15 @@ impl DanmuProvider for BilibiliDanmuProvider {
             }
         }
 
-        // 1. Resolve room_id (may be a short ID).
-        let real_room_id = self.resolve_room_id(room_id).await?;
+        // Ensure buvid cookies are set before any API calls.
+        self.ensure_buvid().await?;
+
+        // 1. Resolve room_id — skip if already numeric (extractor pre-resolves).
+        let real_room_id = if room_id.chars().all(|c| c.is_ascii_digit()) {
+            room_id.parse::<u64>().unwrap_or(0)
+        } else {
+            self.resolve_room_id(room_id).await?
+        };
 
         // 2. Fetch danmaku token and host list.
         let (token, host_list) = self.fetch_danmu_info(real_room_id).await?;
@@ -732,15 +801,26 @@ impl DanmuProvider for BilibiliDanmuProvider {
 
         // 4. Determine UID from cookies (DedeUserID) for authenticated connections.
         let cookies = self.http.cookies();
-        let uid = if cookies.is_empty() { None } else { Some(cookies) }
-            .as_deref()
-            .and_then(|c| {
-                c.split(';')
-                    .find(|p| p.trim().starts_with("DedeUserID="))
-                    .and_then(|p| p.trim().strip_prefix("DedeUserID="))
-                    .and_then(|v| v.parse::<u64>().ok())
-            })
-            .unwrap_or(0);
+        let uid = if cookies.is_empty() {
+            None
+        } else {
+            Some(cookies.as_str())
+        }
+        .and_then(|c| {
+            c.split(';')
+                .find(|p| p.trim().starts_with("DedeUserID="))
+                .and_then(|p| p.trim().strip_prefix("DedeUserID="))
+                .and_then(|v| v.parse::<u64>().ok())
+        })
+        .unwrap_or(0);
+
+        // Extract buvid from cookies for auth packet
+        let buvid = cookies
+            .split(';')
+            .find(|p| p.trim().starts_with("buvid3="))
+            .and_then(|p| p.trim().strip_prefix("buvid3="))
+            .unwrap_or("")
+            .to_string();
 
         // 5. Set up channels and spawn the background task.
         let connection_id = format!("bilibili-{}-{}", real_room_id, Uuid::new_v4());
@@ -752,6 +832,8 @@ impl DanmuProvider for BilibiliDanmuProvider {
             token,
             ws_url,
             uid,
+            buvid,
+            cookies,
             message_tx,
             shutdown_rx,
         ));

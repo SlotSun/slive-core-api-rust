@@ -56,9 +56,14 @@ const MESSAGE_CHANNEL_SIZE: usize = 256;
 
 /// Convert a Huya `fontColor` value to a `#RRGGBB` hex string.
 ///
-/// Returns `None` when `color <= 0` (the platform's default/white).
+/// Returns `None` when the value should be treated as the default (white).
+///
+/// Dart's `numberToColor` converts the int to a hex string and only parses
+/// it when the string length is 6 or 8.  Small values like 0, 1, 255 produce
+/// short hex strings (1-2 chars) and fall through to white.  We replicate
+/// that behaviour by requiring the value to occupy at least 24 bits (>= 0x100000).
 fn font_color_to_hex(color: i64) -> Option<String> {
-    if color <= 0 {
+    if color < 0x100000 {
         None
     } else {
         Some(format!("#{:06X}", (color & 0xFFFFFF) as u32))
@@ -109,26 +114,9 @@ fn decode_huya_frame(data: &[u8]) -> std::result::Result<Vec<DanmuItem>, String>
             Ok(vec![DanmuItem::Message(danmu)])
         }
 
-        // ---- Online viewer count ----
+        // ---- Online viewer count (ignored) ----
         8006 => {
-            if push_msg.msg.len() >= 4 {
-                let online_count = i32::from_be_bytes([
-                    push_msg.msg[0],
-                    push_msg.msg[1],
-                    push_msg.msg[2],
-                    push_msg.msg[3],
-                ]);
-
-                let msg_id = Uuid::new_v4().to_string();
-                let danmu =
-                    DanmuMessage::chat(msg_id, "0", "system", format!("Online: {online_count}"))
-                        .with_metadata("online_count", serde_json::json!(online_count))
-                        .with_metadata("event_type", serde_json::json!("online_count"));
-
-                Ok(vec![DanmuItem::Message(danmu)])
-            } else {
-                Ok(vec![])
-            }
+            Ok(vec![])
         }
 
         _ => {
@@ -442,16 +430,22 @@ mod tests {
     fn test_font_color_to_hex_white_ignored() {
         assert_eq!(font_color_to_hex(0), None);
         assert_eq!(font_color_to_hex(-1), None);
+        assert_eq!(font_color_to_hex(255), None);     // "ff" → too short → white
+        assert_eq!(font_color_to_hex(0xFFFFF), None); // 5 hex digits → too short
     }
 
     #[test]
     fn test_font_color_to_hex_red() {
         assert_eq!(font_color_to_hex(0xFF0000), Some("#FF0000".to_string()));
+        assert_eq!(font_color_to_hex(0x100000), Some("#100000".to_string()));
     }
 
     #[test]
     fn test_font_color_to_hex_green() {
-        assert_eq!(font_color_to_hex(0x00FF00), Some("#00FF00".to_string()));
+        // 0x00FF00 = 65280, hex "ff00" (length 4) → Dart returns white
+        assert_eq!(font_color_to_hex(0x00FF00), None);
+        // 0x10FF00 >= 0x100000 → valid 6-digit color "#10FF00"
+        assert_eq!(font_color_to_hex(0x10FF00), Some("#10FF00".to_string()));
     }
 
     #[test]

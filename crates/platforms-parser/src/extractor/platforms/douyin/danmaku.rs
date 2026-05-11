@@ -13,19 +13,19 @@ use flate2::read::GzDecoder;
 use futures::{SinkExt, StreamExt};
 use md5::{Digest, Md5};
 use prost::Message as ProstMessage;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::http;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::http;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
+use crate::USER_AGENT;
 use crate::danmaku::error::{DanmakuError, Result};
 use crate::danmaku::event::{DanmuControlEvent, DanmuItem};
 use crate::danmaku::message::{DanmuMessage, DanmuType};
 use crate::danmaku::provider::{ConnectionConfig, DanmuConnection, DanmuProvider};
-use crate::USER_AGENT;
 
 // ===========================================================================
 // WebSocket hosts
@@ -559,7 +559,7 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
 
             let danmu =
                 DanmuMessage::gift(id, user_id(user), user_name(user), &gift_name, gift_count);
-            vec![DanmuItem::Message(danmu)]
+            vec![]
         }
 
         "WebcastMemberMessage" => {
@@ -597,7 +597,7 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
                 message_type: DanmuType::UserJoin,
                 metadata: None,
             };
-            vec![DanmuItem::Message(danmu)]
+            vec![]
         }
 
         "WebcastSocialMessage" => {
@@ -635,7 +635,7 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
                 message_type: DanmuType::Follow,
                 metadata: None,
             };
-            vec![DanmuItem::Message(danmu)]
+            vec![]
         }
 
         "WebcastControlMessage" => {
@@ -674,7 +674,7 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
                 .with_metadata("online_count", serde_json::json!(stats.total))
                 .with_metadata("event_type", serde_json::json!("online_count"));
 
-            vec![DanmuItem::Message(danmu)]
+            vec![]
         }
 
         other => {
@@ -888,10 +888,7 @@ impl DanmuProvider for DouyinDanmuProvider {
             .cloned()
             .unwrap_or_else(generate_user_unique_id);
 
-        let ttwid = extras
-            .get("ttwid")
-            .cloned()
-            .unwrap_or_else(get_ttwid);
+        let ttwid = extras.get("ttwid").cloned().unwrap_or_else(get_ttwid);
 
         let connection_id = format!("douyin-{}-{}", room_id, Uuid::new_v4());
         let (message_tx, message_rx) = mpsc::channel(MESSAGE_CHANNEL_SIZE);

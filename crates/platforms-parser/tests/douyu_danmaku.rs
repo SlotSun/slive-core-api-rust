@@ -31,7 +31,7 @@ async fn test_douyu_danmaku() {
         .with_test_writer()
         .try_init();
 
-    let room_id = "12306";
+    let room_id = "3168536";
     let ext = DouyuExtractor::new();
 
     // Step 1: Get room detail

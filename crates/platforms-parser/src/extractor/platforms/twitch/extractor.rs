@@ -783,9 +783,7 @@ query SearchResultsPaginated($query: String!, $options: SearchOptions!) {
             .gql_request("DirectoryPage_Game", DIRECTORY_PAGE_GAME_QUERY, variables)
             .await?;
 
-        let game = data.game.unwrap_or_else(|| GameNode {
-            streams: None,
-        });
+        let game = data.game.unwrap_or_else(|| GameNode { streams: None });
 
         let streams = game.streams.unwrap_or_else(|| StreamConnection {
             edges: None,
@@ -983,6 +981,7 @@ query SearchResultsPaginated($query: String!, $options: SearchOptions!) {
         Ok(LivePlayUrl {
             urls: vec![url],
             url_type: UrlType::M3u8,
+            headers: None,
         })
     }
 

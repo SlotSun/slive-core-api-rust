@@ -1,11 +1,11 @@
 //! Registry of available platform extractors.
 
+use crate::extractor::LiveExtractor;
 use crate::extractor::platforms::bilibili::BilibiliExtractor;
 use crate::extractor::platforms::douyin::DouyinExtractor;
 use crate::extractor::platforms::douyu::DouyuExtractor;
 use crate::extractor::platforms::huya::HuyaExtractor;
 use crate::extractor::platforms::twitch::TwitchExtractor;
-use crate::extractor::LiveExtractor;
 use std::sync::Arc;
 
 /// Registry of available platform extractors.

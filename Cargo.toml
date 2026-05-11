@@ -5,6 +5,9 @@ members=[
     "crates/bytes-util",
     "crates/platforms-parser",
 ]
+exclude=[
+    "slive_core",
+]
 
 [workspace.package]
 version = "0.0.1"

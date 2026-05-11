@@ -4,6 +4,8 @@
 //! to extract embedded JSON stream metadata, then builds play URLs through the
 //! TARS-based CDN token API.
 
+use std::sync::Mutex;
+
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::Value as JsonValue;
@@ -39,16 +41,25 @@ const SEARCH_URL: &str = "https://search.cdn.huya.com/";
 
 /// Top-level category list (hardcoded from the Huya website).
 const CATEGORIES: &[(&str, &str)] = &[
-    ("1", "游戏"),
-    ("2", "娱乐"),
-    ("3", "户外"),
-    ("8", "交友"),
-    ("11", "体育"),
-    ("17", "单机游戏"),
+    ("1", "网游"),
+    ("2", "单机"),
+    ("8", "娱乐"),
+    ("3", "手游"),
 ];
 
 /// Default quality list when `vMultiStreamInfo` is empty.
-const DEFAULT_QUALITIES: &[(&str, i32)] = &[("原画", 0), ("高清", 2000)];
+///
+/// These are the standard Huya quality tiers, ordered from highest to lowest.
+const DEFAULT_QUALITIES: &[(&str, i32)] = &[
+    ("原画", 0),
+    ("蓝光20M", 20000),
+    ("蓝光10M", 10000),
+    ("蓝光8M", 8000),
+    ("蓝光4M", 4000),
+    ("超清", 2000),
+    ("高清", 1000),
+    ("流畅", 500),
+];
 
 /// Rows per search page.
 const SEARCH_ROWS: u32 = 20;
@@ -61,6 +72,7 @@ const SEARCH_ROWS: u32 = 20;
 pub struct HuyaExtractor {
     http: HttpClient,
     room_url_re: Regex,
+    sdk_ua: Mutex<String>,
 }
 
 impl HuyaExtractor {
@@ -70,7 +82,22 @@ impl HuyaExtractor {
                 .build()
                 .expect("failed to build HTTP client"),
             room_url_re: Regex::new(r"(?:https?://)?(?:www\.)?huya\.com/(\d+)").unwrap(),
+            sdk_ua: Mutex::new(String::new()),
         }
+    }
+
+    /// Set a custom User-Agent for all HTTP requests (e.g. HYSDK_UA).
+    /// Also stores the value so it can be included in play URL headers.
+    pub fn set_sdk_ua(&self, ua: &str) {
+        *self.sdk_ua.lock().unwrap() = ua.to_string();
+        if let Err(e) = self.http.set_user_agent(ua) {
+            tracing::warn!("Failed to set Huya SDK UA: {e}");
+        }
+    }
+
+    /// Get the current SDK UA string (empty if not set).
+    fn get_sdk_ua(&self) -> String {
+        self.sdk_ua.lock().unwrap().clone()
     }
 
     fn room_page_url(room_id: &str) -> String {
@@ -265,15 +292,26 @@ impl HuyaExtractor {
 
     /// Parse a single room listing item from the `datas` array.
     fn parse_room_item(item: &JsonValue) -> Option<LiveRoomItem> {
-        let room_id = item.get("profileRoom")?.as_i64()?.to_string();
+        let room_id = match item.get("profileRoom")? {
+            JsonValue::Number(n) => n.to_string(),
+            JsonValue::String(s) => s.clone(),
+            _ => return None,
+        };
         let title = str_field(item, "introduction");
         let title = if title.is_empty() {
             str_field(item, "roomName")
         } else {
             title
         };
-        let cover = str_field(item, "screenshot");
-        let online = item.get("totalCount").and_then(|v| v.as_u64()).unwrap_or(0);
+        let mut cover = str_field(item, "screenshot");
+        if !cover.contains('?') {
+            cover.push_str("?x-oss-process=style/w338_h190&");
+        }
+        let online = match item.get("totalCount") {
+            Some(JsonValue::Number(n)) => n.as_u64().unwrap_or(0),
+            Some(JsonValue::String(s)) => s.parse::<u64>().unwrap_or(0),
+            _ => 0,
+        };
         let user_name = str_field(item, "nick");
 
         Some(LiveRoomItem {
@@ -425,10 +463,12 @@ impl LiveExtractor for HuyaExtractor {
                         let game_name = item.get("gameFullName").and_then(|v| v.as_str());
 
                         if let (Some(gid), Some(game_name)) = (gid, game_name) {
+                            let pic = format!("https://huyaimg.msstatic.com/cdnimage/game/{}-MS.jpg", gid);
                             sub_categories.push(LiveSubCategory {
                                 id: gid,
                                 name: game_name.to_string(),
                                 parent_id: Some(id.to_string()),
+                                pic: Some(pic),
                             });
                         }
                     }
@@ -740,7 +780,20 @@ impl LiveExtractor for HuyaExtractor {
             return Err(ExtractorError::NoStreamsFound);
         }
 
-        Ok(LivePlayUrl { urls, url_type })
+        let headers = {
+            let ua = self.get_sdk_ua();
+            if ua.is_empty() {
+                None
+            } else {
+                Some(vec![("user-agent".to_string(), ua)])
+            }
+        };
+
+        Ok(LivePlayUrl {
+            urls,
+            url_type,
+            headers,
+        })
     }
 
     async fn get_live_status(&self, room_id: &str) -> Result<bool> {

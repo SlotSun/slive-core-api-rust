@@ -1,8 +1,8 @@
 //! WBI signature algorithm for Bilibili API requests.
 //!
-//! Certain Bilibili APIs (e.g. search) require a `w_rid` + `wts` signature
-//! computed via the WBI scheme.  The signing key is derived from two image
-//! filenames published by the `/x/web-interface/nav` endpoint.
+//! Strict port of the Dart `BiliBiliSite.getWbiSign` implementation.
+
+use std::collections::HashMap;
 
 use md5::Digest;
 
@@ -11,32 +11,20 @@ use crate::extractor::http_client::HttpClient;
 /// Fixed reordering table used to derive the mixin key from
 /// the concatenation of `img_key + sub_key`.
 const MIXIN_KEY_ENC_TAB: [usize; 64] = [
-    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29,
-    28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25,
-    54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19,
+    29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+    22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
 ];
-
-/// Characters to strip from parameter values before hashing.
-const FILTER_CHARS: &[char] = &['!', '\'', '(', ')', '*'];
 
 /// Fetch the current WBI img_key and sub_key from the Bilibili nav endpoint.
 ///
 /// Returns `(img_key, sub_key)`.
-///
-/// If `cookies` is `Some`, the request will include the `Cookie` header
-/// (needed for authenticated WBI key retrieval).
 pub async fn get_wbi_keys(
     http: &HttpClient,
-    cookies: Option<&str>,
+    _cookies: Option<&str>,
 ) -> crate::extractor::Result<(String, String)> {
     let url = "https://api.bilibili.com/x/web-interface/nav";
-    let mut req = http.get(url);
-    if let Some(c) = cookies {
-        if !c.is_empty() {
-            req = req.header("Cookie", c);
-        }
-    }
-    let json: serde_json::Value = req.send().await?.json().await?;
+    let json: serde_json::Value = http.get_json(url).await?;
 
     let wbi_img = json
         .pointer("/data/wbi_img")
@@ -59,61 +47,6 @@ pub async fn get_wbi_keys(
     Ok((img_key, sub_key))
 }
 
-/// Sign a set of query parameters in-place, adding `wts` and `w_rid`.
-///
-/// `params` should contain the base query parameters **without** `wts` or
-/// `w_rid`. After this call the vector will also contain those two keys.
-pub fn encode_wbi(params: &mut Vec<(String, String)>, img_key: &str, sub_key: &str) {
-    let mixin_key = get_mixin_key(img_key, sub_key);
-
-    // Remove stale wts/w_rid if present.
-    params.retain(|(k, _)| k != "wts" && k != "w_rid");
-
-    let wts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    params.push(("wts".to_string(), wts.to_string()));
-    params.sort_by(|a, b| a.0.cmp(&b.0));
-
-    // Filter out forbidden characters from values.
-    let filtered: Vec<(String, String)> = params
-        .iter()
-        .map(|(k, v)| {
-            let fv: String = v.chars().filter(|c| !FILTER_CHARS.contains(c)).collect();
-            (k.clone(), fv)
-        })
-        .collect();
-
-    // URL-encode each key/value pair using Bilibili's custom encoding
-    // (percent-encode non-unreserved chars, spaces as %20, NOT as +).
-    let query = filtered
-        .iter()
-        .map(|(k, v)| format!("{}={}", wbi_url_encode(k), wbi_url_encode(v)))
-        .collect::<Vec<_>>()
-        .join("&");
-
-    let to_hash = format!("{}{}", query, mixin_key);
-    let digest = md5::Md5::digest(to_hash.as_bytes());
-    let w_rid = hex::encode(digest);
-
-    params.push(("w_rid".to_string(), w_rid));
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Extract the key (filename without extension) from a Bilibili wbi_img URL.
-///
-/// e.g. `https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png`
-/// → `7cd084941338484aae1ad9425b84077c`
-fn extract_key_from_url(url: &str) -> Option<String> {
-    let filename = url.rsplit('/').next()?;
-    Some(filename.replace(".png", ""))
-}
-
 /// Derive the 32-byte mixin key from `img_key + sub_key`.
 fn get_mixin_key(img_key: &str, sub_key: &str) -> String {
     let raw = format!("{}{}", img_key, sub_key);
@@ -128,21 +61,67 @@ fn get_mixin_key(img_key: &str, sub_key: &str) -> String {
     key
 }
 
-/// URL-encode a string using Bilibili's WBI encoding rules.
+/// Parse query parameters from a URL string into a `HashMap`.
+///
+/// Equivalent to Dart's `Uri.parse(url).queryParameters`.
+fn parse_query_params(url: &str) -> HashMap<String, String> {
+    let query = match url.find('?') {
+        Some(pos) => &url[pos + 1..],
+        None => return HashMap::new(),
+    };
+    // Strip fragment if present.
+    let query = match query.find('#') {
+        Some(pos) => &query[..pos],
+        None => query,
+    };
+    let mut params = HashMap::new();
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next().unwrap_or("").to_string();
+        let value = parts.next().unwrap_or("").to_string();
+        // Decode percent-encoded values (simple decode: %XX → byte).
+        let value = percent_decode(&value);
+        params.insert(key, value);
+    }
+    params
+}
+
+/// Simple percent-decode: replace `%XX` with the corresponding byte.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 2 < bytes.len() && bytes[i] == b'%' {
+            if let Ok(byte) = u8::from_str_radix(
+                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
+                16,
+            ) {
+                result.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(result).unwrap_or_default()
+}
+
+/// URL-encode a string using `Uri.encodeQueryComponent` semantics.
 ///
 /// - Unreserved chars (`a-zA-Z0-9-_.~`) are kept as-is.
-/// - Forbidden chars (`!'()*`) are stripped entirely.
 /// - All other chars are percent-encoded (UTF-8 bytes, uppercase hex).
 /// - Spaces become `%20` (NOT `+`).
-fn wbi_url_encode(s: &str) -> String {
+fn uri_encode_query_component(s: &str) -> String {
     let mut encoded = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
             'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => {
                 encoded.push(c);
-            }
-            '!' | '\'' | '(' | ')' | '*' => {
-                // Strip these characters entirely.
             }
             _ => {
                 let mut buf = [0u8; 4];
@@ -154,4 +133,97 @@ fn wbi_url_encode(s: &str) -> String {
         }
     }
     encoded
+}
+
+/// Sign a URL's query parameters using the WBI algorithm.
+///
+/// This is a strict port of Dart's `BiliBiliSite.getWbiSign(String url)`:
+///
+/// 1. Parse query params from the URL.
+/// 2. Add `wts` (current unix timestamp).
+/// 3. Sort by key.
+/// 4. Filter `!'()*` from values.
+/// 5. Encode as query string using `Uri.encodeQueryComponent`.
+/// 6. MD5 hash `query + mixinKey` → `w_rid`.
+/// 7. Return signed params (including `wts` and `w_rid`).
+pub async fn sign_url(
+    http: &HttpClient,
+    cookies: Option<&str>,
+    url: &str,
+) -> crate::extractor::Result<HashMap<String, String>> {
+    let (img_key, sub_key) = get_wbi_keys(http, cookies).await?;
+    let mixin_key = get_mixin_key(&img_key, &sub_key);
+
+    let mut query_params = parse_query_params(url);
+
+    // Add wts (current unix timestamp).
+    let wts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    query_params.insert("wts".to_string(), wts.to_string());
+
+    // Sort by key and filter values.
+    let mut sorted_keys: Vec<&String> = query_params.keys().collect();
+    sorted_keys.sort();
+
+    let mut filtered: HashMap<String, String> = HashMap::new();
+    for key in &sorted_keys {
+        let value = query_params.get(*key).unwrap();
+        let filtered_value: String = value.chars().filter(|c| !"'()*".contains(*c)).collect();
+        filtered.insert((*key).clone(), filtered_value);
+    }
+
+    // Build query string (sorted, encoded).
+    let mut sorted_filtered_keys: Vec<&String> = filtered.keys().collect();
+    sorted_filtered_keys.sort();
+
+    let query = sorted_filtered_keys
+        .iter()
+        .map(|key| {
+            format!(
+                "{}={}",
+                uri_encode_query_component(key),
+                uri_encode_query_component(filtered.get(*key).unwrap())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+
+    // Compute w_rid.
+    let to_hash = format!("{}{}", query, mixin_key);
+    let digest = md5::Md5::digest(to_hash.as_bytes());
+    let w_rid = hex::encode(digest);
+
+    query_params.insert("w_rid".to_string(), w_rid);
+    Ok(query_params)
+}
+
+/// Encode params into a query string using `Uri.encodeQueryComponent` semantics,
+/// for use in the actual HTTP request.
+///
+/// This matches how Dart's `HttpClient` sends the signed params.
+pub fn encode_query_string(params: &HashMap<String, String>) -> String {
+    let mut keys: Vec<&String> = params.keys().collect();
+    keys.sort();
+    keys.iter()
+        .map(|k| {
+            format!(
+                "{}={}",
+                uri_encode_query_component(k),
+                uri_encode_query_component(params.get(*k).unwrap())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Extract the key (filename without extension) from a Bilibili wbi_img URL.
+fn extract_key_from_url(url: &str) -> Option<String> {
+    let filename = url.rsplit('/').next()?;
+    Some(filename.replace(".png", ""))
 }

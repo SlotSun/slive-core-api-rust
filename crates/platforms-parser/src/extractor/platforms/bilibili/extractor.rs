@@ -1,5 +1,7 @@
 //! Bilibili (哔哩哔哩) live streaming platform extractor.
 
+use std::sync::Mutex;
+
 use async_trait::async_trait;
 use regex::Regex;
 
@@ -56,22 +58,29 @@ const QUALITY_MAP: &[(&str, &str)] = &[
 pub struct BilibiliExtractor {
     http: HttpClient,
     room_url_re: Regex,
+    access_id: Mutex<String>,
+    buvid3: Mutex<String>,
+    buvid4: Mutex<String>,
 }
 
 impl BilibiliExtractor {
     pub fn new() -> Self {
         Self {
             http: HttpClient::builder()
-                .default_header("Referer", "https://live.bilibili.com")
+                .default_header("Referer", "https://live.bilibili.com/")
                 .build()
                 .expect("failed to build HTTP client"),
             room_url_re: Regex::new(r"(?:https?://)?(?:www\.)?(?:live\.)?bilibili\.com/(\d+)")
                 .unwrap(),
+            access_id: Mutex::new(String::new()),
+            buvid3: Mutex::new(String::new()),
+            buvid4: Mutex::new(String::new()),
         }
     }
 
     /// Fetch a URL and deserialize the response as JSON.
     async fn fetch_json(&self, url: &str) -> Result<JsonValue> {
+        self.ensure_buvid().await?;
         self.http.get_json(url).await
     }
 
@@ -88,6 +97,93 @@ impl BilibiliExtractor {
                 code, msg
             )));
         }
+        Ok(())
+    }
+
+    /// Fetch and cache the `access_id` (w_webid) from `https://live.bilibili.com/lol`.
+    ///
+    /// Equivalent to Dart's `getAccessId()`.
+    async fn get_access_id(&self) -> Result<String> {
+        {
+            let cached = self.access_id.lock().unwrap();
+            if !cached.is_empty() {
+                return Ok(cached.clone());
+            }
+        }
+
+        let resp = self
+            .http
+            .get("https://live.bilibili.com/lol")
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        let re = Regex::new(r#""access_id":"(.*?)""#).unwrap();
+        let access_id = re
+            .captures(&resp)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().replace('\\', ""))
+            .unwrap_or_default();
+
+        debug!(access_id = %access_id, resp_len = resp.len(), "get_access_id result");
+
+        let mut cached = self.access_id.lock().unwrap();
+        *cached = access_id.clone();
+        Ok(access_id)
+    }
+
+    /// Fetch `buvid3` and `buvid4` browser fingerprint cookies from Bilibili.
+    ///
+    /// Equivalent to Dart's `getBuvid()`. These cookies are required for
+    /// all API requests to avoid -352 risk control errors.
+    async fn ensure_buvid(&self) -> Result<()> {
+        {
+            let b3 = self.buvid3.lock().unwrap();
+            if !b3.is_empty() {
+                return Ok(());
+            }
+        }
+
+        let json: JsonValue = self
+            .http
+            .get_json("https://api.bilibili.com/x/frontend/finger/spi")
+            .await?;
+
+        let data = json.get("data").ok_or_else(|| {
+            ExtractorError::Other("missing data in buvid response".into())
+        })?;
+
+        let b3 = data
+            .get("b_3")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let b4 = data
+            .get("b_4")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        {
+            let mut cached3 = self.buvid3.lock().unwrap();
+            *cached3 = b3.clone();
+        }
+        {
+            let mut cached4 = self.buvid4.lock().unwrap();
+            *cached4 = b4.clone();
+        }
+
+        // Update HTTP client cookies to include buvid.
+        let existing = self.http.cookies();
+        if existing.is_empty() {
+            self.http
+                .set_cookies(&format!("buvid3={};buvid4={};", b3, b4));
+        } else if !existing.contains("buvid3") {
+            self.http
+                .set_cookies(&format!("{};buvid3={};buvid4={}", existing, b3, b4));
+        }
+
         Ok(())
     }
 
@@ -116,21 +212,25 @@ impl BilibiliExtractor {
     async fn wbi_get(
         &self,
         base_url: &str,
-        extra_params: Vec<(String, String)>,
+        params: Vec<(String, String)>,
     ) -> Result<JsonValue> {
-        let (img_key, sub_key) =
-            wbi::get_wbi_keys(&self.http, Some(&self.http.cookies())).await?;
-        let mut params = extra_params;
-        wbi::encode_wbi(&mut params, &img_key, &sub_key);
-
+        // Build the full URL with query params (same as Dart builds the url string).
         let query: String = params
             .iter()
             .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
             .collect::<Vec<_>>()
             .join("&");
+        let url_with_params = format!("{}?{}", base_url, query);
 
-        let url = format!("{}?{}", base_url, query);
-        debug!(url = %url, "WBI-signed request");
+        // Sign using the Dart-ported WBI algorithm.
+        let signed_params =
+            wbi::sign_url(&self.http, Some(&self.http.cookies()), &url_with_params).await?;
+
+        // Build final URL from base_url + signed params.
+        let final_query = wbi::encode_query_string(&signed_params);
+        let url = format!("{}?{}", base_url, final_query);
+        eprintln!("[DEBUG] wbi_get final URL: {}", url);
+        eprintln!("[DEBUG] wbi_get cookies: {}", self.http.cookies());
         self.fetch_json(&url).await
     }
 
@@ -310,7 +410,8 @@ impl LiveExtractor for BilibiliExtractor {
     // ------------------------------------------------------------------
 
     async fn get_categories(&self) -> Result<Vec<LiveCategory>> {
-        let json = self.fetch_json(CATEGORIES_URL).await?;
+        let url = format!("{}?need_entrance=1&parent_id=0", CATEGORIES_URL);
+        let json = self.fetch_json(&url).await?;
         Self::check_response(&json)?;
 
         let data = json
@@ -326,16 +427,26 @@ impl LiveExtractor for BilibiliExtractor {
             let mut sub_categories = Vec::new();
             if let Some(list) = area.get("list").and_then(|v| v.as_array()) {
                 for item in list {
-                    let sub_id = item.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let sub_id = str_field(item, "id");
                     let sub_name = str_field(item, "name");
                     let parent_id = item
                         .get("parent_id")
-                        .and_then(|v| v.as_u64())
+                        .and_then(|v| v.as_str())
                         .map(|v| v.to_string());
+                    let pic_raw = item
+                        .get("pic")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let pic = if pic_raw.is_empty() {
+                        None
+                    } else {
+                        Some(format!("{pic_raw}@100w.png"))
+                    };
                     sub_categories.push(LiveSubCategory {
-                        id: sub_id.to_string(),
+                        id: sub_id,
                         name: sub_name,
                         parent_id,
+                        pic,
                     });
                 }
             }
@@ -352,8 +463,16 @@ impl LiveExtractor for BilibiliExtractor {
 
     async fn search_rooms(&self, keyword: &str, page: u32) -> Result<LiveSearchRoomResult> {
         let params = vec![
-            ("search_type".to_string(), "live_room".to_string()),
+            ("context".to_string(), String::new()),
+            ("search_type".to_string(), "live".to_string()),
+            ("cover_type".to_string(), "user_cover".to_string()),
+            ("order".to_string(), String::new()),
             ("keyword".to_string(), keyword.to_string()),
+            ("category_id".to_string(), String::new()),
+            ("__refresh__".to_string(), String::new()),
+            ("_extra".to_string(), String::new()),
+            ("highlight".to_string(), "0".to_string()),
+            ("single_column".to_string(), "0".to_string()),
             ("page".to_string(), page.to_string()),
         ];
 
@@ -366,20 +485,26 @@ impl LiveExtractor for BilibiliExtractor {
 
         let result = data
             .get("result")
+            .and_then(|v| v.get("live_room"))
             .and_then(|v| v.as_array())
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
-        let num_pages = data.get("numPages").and_then(|v| v.as_u64()).unwrap_or(1);
 
+        let em_re = Regex::new(r"<.*?em.*?>").unwrap();
         let items: Vec<LiveRoomItem> = result
             .iter()
             .filter_map(|item| {
                 let room_id = item.get("roomid").and_then(|v| v.as_u64())?.to_string();
-                let title = str_field(item, "title");
-                let cover = str_field(item, "user_cover");
+                let title_raw = str_field(item, "title");
+                let title = em_re.replace_all(&title_raw, "").to_string();
+                let cover_raw = str_field(item, "cover");
+                let cover = if cover_raw.starts_with("//") {
+                    format!("https:{}", cover_raw)
+                } else {
+                    cover_raw
+                };
                 let online = item.get("online").and_then(|v| v.as_u64()).unwrap_or(0);
                 let user_name = str_field(item, "uname");
-                let user_avatar = str_field(item, "user_cover");
 
                 Some(LiveRoomItem {
                     room_id: room_id.clone(),
@@ -387,21 +512,29 @@ impl LiveExtractor for BilibiliExtractor {
                     cover,
                     online,
                     user_name,
-                    user_avatar,
+                    user_avatar: String::new(),
                     url: format!("{}/{}", BASE_URL, room_id),
                     platform: PLATFORM_ID.to_string(),
                 })
             })
             .collect();
 
-        let has_more = page < num_pages as u32;
+        let has_more = items.len() >= 40;
         Ok(LiveSearchRoomResult { has_more, items })
     }
 
     async fn search_anchors(&self, keyword: &str, page: u32) -> Result<LiveSearchAnchorResult> {
         let params = vec![
-            ("search_type".to_string(), "bili_user".to_string()),
+            ("context".to_string(), String::new()),
+            ("search_type".to_string(), "live_user".to_string()),
+            ("cover_type".to_string(), "user_cover".to_string()),
+            ("order".to_string(), String::new()),
             ("keyword".to_string(), keyword.to_string()),
+            ("category_id".to_string(), String::new()),
+            ("__refresh__".to_string(), String::new()),
+            ("_extra".to_string(), String::new()),
+            ("highlight".to_string(), "0".to_string()),
+            ("single_column".to_string(), "0".to_string()),
             ("page".to_string(), page.to_string()),
         ];
 
@@ -417,16 +550,23 @@ impl LiveExtractor for BilibiliExtractor {
             .and_then(|v| v.as_array())
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
-        let num_pages = data.get("numPages").and_then(|v| v.as_u64()).unwrap_or(1);
 
+        let em_re = Regex::new(r"<.*?em.*?>").unwrap();
         let items: Vec<LiveAnchorItem> = result
             .iter()
             .filter_map(|item| {
                 let user_id = item.get("mid").and_then(|v| v.as_u64())?.to_string();
-                let user_name = str_field(item, "uname");
-                let user_avatar = str_field(item, "upic");
+                let uname_raw = str_field(item, "uname");
+                let user_name = em_re.replace_all(&uname_raw, "").to_string();
+                let uface = str_field(item, "uface");
+                let user_avatar = if uface.starts_with("//") {
+                    format!("https:{}", uface)
+                } else {
+                    uface
+                };
                 let room_id = item
-                    .get("room_id")
+                    .get("roomid")
+                    .or_else(|| item.get("room_id"))
                     .and_then(|v| v.as_u64())
                     .filter(|&v| v > 0)
                     .map(|v| v.to_string());
@@ -447,7 +587,7 @@ impl LiveExtractor for BilibiliExtractor {
             })
             .collect();
 
-        let has_more = page < num_pages as u32;
+        let has_more = items.len() >= 40;
         Ok(LiveSearchAnchorResult { has_more, items })
     }
 
@@ -456,12 +596,21 @@ impl LiveExtractor for BilibiliExtractor {
         category: &LiveSubCategory,
         page: u32,
     ) -> Result<LiveCategoryResult> {
-        let url = CATEGORY_ROOMS_URL
-            .replace("{parent_id}", category.parent_id.as_deref().unwrap_or("0"))
-            .replace("{area_id}", &category.id)
-            .replace("{page}", &page.to_string());
+        let base = "https://api.live.bilibili.com/xlive/web-interface/v1/second/getList";
+        let w_webid = self.get_access_id().await.unwrap_or_default();
+        let params = vec![
+            ("platform".to_string(), "web".to_string()),
+            (
+                "parent_area_id".to_string(),
+                category.parent_id.clone().unwrap_or_else(|| "0".to_string()),
+            ),
+            ("area_id".to_string(), category.id.clone()),
+            ("sort_type".to_string(), String::new()),
+            ("page".to_string(), page.to_string()),
+            ("w_webid".to_string(), w_webid),
+        ];
 
-        let json = self.fetch_json(&url).await?;
+        let json = self.wbi_get(base, params).await?;
         Self::check_response(&json)?;
 
         let data = json
@@ -475,9 +624,40 @@ impl LiveExtractor for BilibiliExtractor {
             .unwrap_or(&[]);
         let has_more = data
             .get("has_more")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let items = Self::parse_room_list(list);
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            == 1;
+
+        let items: Vec<LiveRoomItem> = list
+            .iter()
+            .filter_map(|item| {
+                let room_id = item
+                    .get("roomid")
+                    .or_else(|| item.get("room_id"))
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v.to_string())?;
+                let title = str_field(item, "title");
+                let cover_raw = str_field(item, "cover");
+                let cover = if cover_raw.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}@400w.jpg", cover_raw)
+                };
+                let online = item.get("online").and_then(|v| v.as_u64()).unwrap_or(0);
+                let user_name = str_field(item, "uname");
+
+                Some(LiveRoomItem {
+                    room_id: room_id.clone(),
+                    title,
+                    cover,
+                    online,
+                    user_name,
+                    user_avatar: String::new(),
+                    url: format!("{}/{}", BASE_URL, room_id),
+                    platform: PLATFORM_ID.to_string(),
+                })
+            })
+            .collect();
 
         Ok(LiveCategoryResult { has_more, items })
     }
@@ -687,7 +867,11 @@ impl LiveExtractor for BilibiliExtractor {
 
                 // Prefer the first format that yields URLs (FLV > fMP4).
                 if !urls.is_empty() {
-                    return Ok(LivePlayUrl { urls, url_type });
+                    let headers = Some(vec![
+                        ("referer".to_string(), "https://live.bilibili.com".to_string()),
+                        ("user-agent".to_string(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188".to_string()),
+                    ]);
+                    return Ok(LivePlayUrl { urls, url_type, headers });
                 }
             }
         }
@@ -696,7 +880,11 @@ impl LiveExtractor for BilibiliExtractor {
             return Err(ExtractorError::NoStreamsFound);
         }
 
-        Ok(LivePlayUrl { urls, url_type })
+        let headers = Some(vec![
+            ("referer".to_string(), "https://live.bilibili.com".to_string()),
+            ("user-agent".to_string(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188".to_string()),
+        ]);
+        Ok(LivePlayUrl { urls, url_type, headers })
     }
 
     async fn get_live_status(&self, room_id: &str) -> Result<bool> {

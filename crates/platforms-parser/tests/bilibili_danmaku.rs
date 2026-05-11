@@ -35,7 +35,7 @@ async fn test_bilibili_danmaku() {
         .try_init();
 
     let cookies = common::bilibili_cookies();
-    let room_id = "23197314";
+    let room_id = "24160384";
     let ext = BilibiliExtractor::new();
     ext.set_cookies(cookies);
 

@@ -3,11 +3,11 @@
 
 mod common;
 
+use platforms_parser::danmaku::provider::{ConnectionConfig, DanmuProvider};
 use platforms_parser::extractor::LiveExtractor;
 use platforms_parser::extractor::platforms::douyin::DouyinExtractor;
-use platforms_parser::extractor::platforms::douyin::models::DouyinDanmakuData;
-use platforms_parser::danmaku::provider::{ConnectionConfig, DanmuProvider};
 use platforms_parser::extractor::platforms::douyin::danmaku::DouyinDanmuProvider;
+use platforms_parser::extractor::platforms::douyin::models::DouyinDanmakuData;
 
 fn ensure_tls_provider() {
     use std::sync::Once;
@@ -68,7 +68,10 @@ async fn test_get_room_detail() {
     match ext.fetch_room_enter_debug(room_id).await {
         Ok(raw) => {
             let display = if raw.len() > 500 { &raw[..500] } else { &raw };
-            println!("\n=== Raw API response (first 500 chars) ===\n{}\n", display);
+            println!(
+                "\n=== Raw API response (first 500 chars) ===\n{}\n",
+                display
+            );
         }
         Err(e) => println!("  ⚠️ fetch_room_enter failed: {}", e),
     }
@@ -82,7 +85,11 @@ async fn test_get_room_detail() {
             println!("  在线:   {}", detail.online);
             println!(
                 "  状态:   {}",
-                if detail.status { "直播中" } else { "未开播" }
+                if detail.status {
+                    "直播中"
+                } else {
+                    "未开播"
+                }
             );
 
             if detail.status {
@@ -121,7 +128,10 @@ async fn test_search_rooms() {
     match ext.search_rooms_debug("游戏").await {
         Ok(raw) => {
             let display = if raw.len() > 800 { &raw[..800] } else { &raw };
-            println!("\n=== Raw search response (first 800 chars) ===\n{}\n", display);
+            println!(
+                "\n=== Raw search response (first 800 chars) ===\n{}\n",
+                display
+            );
         }
         Err(e) => println!("  ⚠️ search_rooms_debug failed: {}", e),
     }
@@ -174,10 +184,20 @@ async fn test_danmaku_connect() {
     let room_id = "447840496489";
 
     // Get room detail to obtain danmaku_data
-    let detail = ext.get_room_detail(room_id).await.expect("get_room_detail failed");
+    let detail = ext
+        .get_room_detail(room_id)
+        .await
+        .expect("get_room_detail failed");
     println!("=== 弹幕连接测试 ===");
     println!("  房间: {} ({})", detail.room_id, detail.user_name);
-    println!("  状态: {}", if detail.status { "直播中" } else { "未开播" });
+    println!(
+        "  状态: {}",
+        if detail.status {
+            "直播中"
+        } else {
+            "未开播"
+        }
+    );
 
     let danmaku_data = match &detail.danmaku_data {
         Some(d) => d.clone(),
@@ -198,7 +218,10 @@ async fn test_danmaku_connect() {
     extras.insert("room_id".to_string(), dm.room_id.clone());
     let config = ConnectionConfig::default().with_extras(extras);
 
-    let mut conn = provider.connect(&dm.web_rid, config).await.expect("danmaku connect failed");
+    let mut conn = provider
+        .connect(&dm.web_rid, config)
+        .await
+        .expect("danmaku connect failed");
     println!("  已连接: {} (id={})", conn.is_connected, conn.id);
 
     // Receive messages for ~15 seconds
@@ -210,7 +233,10 @@ async fn test_danmaku_connect() {
                 count += 1;
                 match &item {
                     platforms_parser::danmaku::event::DanmuItem::Message(msg) => {
-                        println!("  [{}] {}: {}", msg.message_type as u8, msg.username, msg.content);
+                        println!(
+                            "  [{}] {}: {}",
+                            msg.message_type as u8, msg.username, msg.content
+                        );
                     }
                     platforms_parser::danmaku::event::DanmuItem::Control(evt) => {
                         println!("  [控制] {:?}", evt);
@@ -232,6 +258,9 @@ async fn test_danmaku_connect() {
     }
 
     println!("  共收到 {} 条消息", count);
-    provider.disconnect(&mut conn).await.expect("disconnect failed");
+    provider
+        .disconnect(&mut conn)
+        .await
+        .expect("disconnect failed");
     println!("  已断开连接");
 }

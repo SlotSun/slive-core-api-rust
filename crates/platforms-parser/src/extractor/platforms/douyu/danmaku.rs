@@ -6,10 +6,9 @@
 //! ## Protocol overview
 //!
 //! 1. Open a binary WebSocket to `wss://danmuproxy.douyu.com:8506/`.
-//! 2. Send a login request: `type@=loginreq/roomid@={room_id}/`
-//! 3. On login response, join a group: `type@=joingroup/rid@={room_id}/gid@=-9999/`
-//! 4. Send keepalive heartbeats every 45 seconds: `type@=mrkl/`
-//! 5. Decode incoming STT messages and dispatch by `type`.
+//! 2. Send login request + join-group request immediately (no wait for response).
+//! 3. Send keepalive heartbeats every 45 seconds: `type@=mrkl/`
+//! 4. Decode incoming STT messages and dispatch by `type`.
 //!
 //! ## Binary framing
 //!
@@ -23,16 +22,16 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use rustc_hash::FxHashMap;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::danmaku::error::{DanmakuError, Result};
 use crate::danmaku::event::{DanmuControlEvent, DanmuItem};
-use crate::danmaku::message::{DanmuMessage, DanmuType};
+use crate::danmaku::message::DanmuMessage;
 use crate::danmaku::provider::{ConnectionConfig, DanmuConnection, DanmuProvider};
 
 use super::stt;
@@ -78,6 +77,23 @@ fn encode_logout() -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Extract face URL from Douyu STT `uat` field.
+/// In STT wire format, `uat` uses `//` as array separator.
+/// Index 1 is the avatar URL path (CDN-relative).
+fn extract_douyu_face(inner: &FxHashMap<String, String>) -> String {
+    if let Some(uat) = inner.get("uat") {
+        let parts: Vec<&str> = uat.split("//").collect();
+        if parts.len() > 1 && !parts[1].is_empty() {
+            return format!("https://{}", parts[1].trim());
+        }
+    }
+    String::new()
+}
+
+// ---------------------------------------------------------------------------
 // Danmu message dispatching
 // ---------------------------------------------------------------------------
 
@@ -102,11 +118,19 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
 
             let mut danmu = DanmuMessage::chat(msg_id, uid, nn, txt);
 
-            // Extract color info if present.
+            // Extract color info if present, but skip black/dark colors.
             if let Some(col) = msg.get("col") {
                 if let Ok(col_int) = col.parse::<i64>() {
                     if col_int > 0 {
-                        danmu = danmu.with_color(format!("#{:06X}", (col_int & 0xFFFFFF) as u32));
+                        let r = ((col_int >> 16) & 0xFF) as u8;
+                        let g = ((col_int >> 8) & 0xFF) as u8;
+                        let b = (col_int & 0xFF) as u8;
+                        // Treat very dark colors as white.
+                        if r < 0x40 && g < 0x40 && b < 0x40 {
+                            danmu = danmu.with_color("#FFFFFF");
+                        } else {
+                            danmu = danmu.with_color(format!("#{:06X}", (col_int & 0xFFFFFF) as u32));
+                        }
                     }
                 }
             }
@@ -119,66 +143,19 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
             vec![DanmuItem::Message(danmu)]
         }
 
-        // ---- Gift message ----
+        // ---- Gift message (ignored) ----
         "dgb" => {
-            let uid = msg.get("uid").cloned().unwrap_or_default();
-            let nn = msg.get("nn").cloned().unwrap_or_default();
-            let gfid = msg.get("gfid").cloned().unwrap_or_default();
-            let gfcnt = msg
-                .get("gfcnt")
-                .and_then(|v| v.parse::<u32>().ok())
-                .unwrap_or(1);
-            let msg_id = Uuid::new_v4().to_string();
-
-            let gift_name = msg
-                .get("gfn")
-                .cloned()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| format!("gift_{}", gfid));
-
-            let danmu = DanmuMessage::gift(msg_id, uid, nn, gift_name, gfcnt);
-
-            vec![DanmuItem::Message(danmu)]
+            vec![]
         }
 
-        // ---- User enter ----
+        // ---- User enter (ignored) ----
         "uenter" => {
-            let uid = msg.get("uid").cloned().unwrap_or_default();
-            let nn = msg.get("nn").cloned().unwrap_or_default();
-            let msg_id = Uuid::new_v4().to_string();
-
-            let content = format!("{} 进入直播间", nn);
-            let danmu = DanmuMessage {
-                id: msg_id,
-                user_id: uid,
-                username: nn,
-                content,
-                color: None,
-                timestamp: chrono::Utc::now(),
-                message_type: DanmuType::UserJoin,
-                metadata: None,
-            };
-
-            vec![DanmuItem::Message(danmu)]
+            vec![]
         }
 
-        // ---- Room status change ----
+        // ---- Room status change (ignored) ----
         "rss" => {
-            let rid = msg.get("rid").cloned().unwrap_or_default();
-            let is_live = msg.get("is_live").map(|v| v == "1").unwrap_or(false);
-
-            let status_text = if is_live { "开播" } else { "下播" };
-            let msg_id = Uuid::new_v4().to_string();
-            let danmu = DanmuMessage::chat(
-                msg_id,
-                "0",
-                "system",
-                format!("房间 {} {}", rid, status_text),
-            )
-            .with_metadata("event_type", serde_json::json!("room_status"))
-            .with_metadata("is_live", serde_json::json!(is_live));
-
-            vec![DanmuItem::Message(danmu)]
+            vec![]
         }
 
         // ---- Super chat: 付费弹幕 ----
@@ -194,21 +171,42 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                 .get("cet")
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(0);
+            // `now` is the current timestamp in seconds.
+            let now = msg
+                .get("now")
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(0);
+            let start_time = now;
+            let end_time = now + keep_time as i64;
 
-            // Parse nested chatmsg STT for user info.
-            let (nn, txt) = msg
+            // Parse nested chatmsg STT for user info and face (ic field).
+            let (nn, txt, face) = msg
                 .get("chatmsg")
                 .map(|nested| {
                     let inner = stt::stt_decode(nested);
                     let nn = inner.get("nn").cloned().unwrap_or_default();
                     let txt = inner.get("txt").cloned().unwrap_or_default();
-                    (nn, txt)
+                    let ic = inner.get("ic").cloned().unwrap_or_default();
+                    let face = if ic.is_empty() {
+                        String::new()
+                    } else {
+                        format!("https://apic.douyucdn.cn/upload/{ic}_small.jpg")
+                    };
+                    (nn, txt, face)
                 })
                 .unwrap_or_default();
 
             let danmu = DanmuMessage::super_chat(msg_id, "", nn, txt, price)
                 .with_super_chat_keep_time(keep_time)
-                .with_metadata("sc_type", serde_json::json!("comm_chatmsg"));
+                .with_metadata("sc_type", serde_json::json!("comm_chatmsg"))
+                .with_metadata("face", serde_json::json!(face))
+                .with_metadata("start_time", serde_json::json!(start_time))
+                .with_metadata("end_time", serde_json::json!(end_time))
+                .with_metadata("background_color", serde_json::json!("#c1c1ff"))
+                .with_metadata(
+                    "background_bottom_color",
+                    serde_json::json!("#292a60"),
+                );
 
             vec![DanmuItem::Message(danmu)]
         }
@@ -218,7 +216,7 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
         "voice_trlt" => {
             let msg_id = Uuid::new_v4().to_string();
 
-            let (nn, content, price, keep_time) = msg
+            let (nn, content, price, keep_time, face, start_time, end_time) = msg
                 .get("list")
                 .map(|nested| {
                     let inner = stt::stt_decode(nested);
@@ -233,14 +231,30 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                         .get("etime")
                         .and_then(|v| v.parse::<u64>().ok())
                         .unwrap_or(0);
-                    (nn, content, price, keep_time)
+                    let face = extract_douyu_face(&inner);
+                    let start_time = inner
+                        .get("acptime")
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(0);
+                    let end_time = inner
+                        .get("etime")
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(0);
+                    (nn, content, price, keep_time, face, start_time, end_time)
                 })
                 .unwrap_or_default();
 
-            let danmu =
-                DanmuMessage::super_chat(msg_id, "", nn, content, price)
-                    .with_super_chat_keep_time(keep_time)
-                    .with_metadata("sc_type", serde_json::json!("voice_trlt"));
+            let danmu = DanmuMessage::super_chat(msg_id, "", nn, content, price)
+                .with_super_chat_keep_time(keep_time)
+                .with_metadata("sc_type", serde_json::json!("voice_trlt"))
+                .with_metadata("face", serde_json::json!(face))
+                .with_metadata("start_time", serde_json::json!(start_time))
+                .with_metadata("end_time", serde_json::json!(end_time))
+                .with_metadata("background_color", serde_json::json!("#ffffff"))
+                .with_metadata(
+                    "background_bottom_color",
+                    serde_json::json!("#246488"),
+                );
 
             vec![DanmuItem::Message(danmu)]
         }
@@ -298,43 +312,67 @@ impl Drop for DouyuConnectionState {
 // Background WebSocket task
 // ---------------------------------------------------------------------------
 
+/// Helper to send a `StreamClosed` error through the channel.
+async fn send_close_event(tx: &mpsc::Sender<DanmuItem>, msg: String) {
+    let _ = tx
+        .send(DanmuItem::Control(DanmuControlEvent::StreamClosed {
+            message: Some(msg),
+            action: None,
+        }))
+        .await;
+}
+
 /// Long-running task that:
 /// 1. Connects to the Douyu danmaku WebSocket.
-/// 2. Sends the login request.
-/// 3. On login response, sends the join-group request.
-/// 4. Sends periodic heartbeats.
-/// 5. Decodes incoming frames and forwards [`DanmuItem`]s through `message_tx`.
+/// 2. Sends login request + join-group request immediately (no wait for response).
+/// 3. Sends periodic heartbeats.
+/// 4. Decodes incoming frames and forwards [`DanmuItem`]s through `message_tx`.
 async fn run_douyu_ws_task(
     room_id: String,
     message_tx: mpsc::Sender<DanmuItem>,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) {
     // --- Connect ----------------------------------------------------------
+    debug!(room_id = %room_id, url = DOUYU_WS_URL, "Douyu WS task starting, connecting...");
     let ws_stream = match tokio::time::timeout(CONNECT_TIMEOUT, connect_async(DOUYU_WS_URL)).await {
         Ok(Ok((stream, _response))) => stream,
         Ok(Err(e)) => {
-            error!("Failed to connect to Douyu WebSocket: {e}");
+            let msg = format!("Failed to connect to Douyu WebSocket: {e}");
+            error!("{msg}");
+            send_close_event(&message_tx, msg).await;
             return;
         }
         Err(_) => {
-            error!("Timeout connecting to Douyu WebSocket");
+            let msg = "Timeout connecting to Douyu WebSocket".to_string();
+            error!("{msg}");
+            send_close_event(&message_tx, msg).await;
             return;
         }
     };
 
     let (mut ws_sink, mut ws_source) = ws_stream.split();
-    info!(room_id = %room_id, "Connected to Douyu WebSocket");
+    info!(room_id = %room_id, "Douyu WebSocket connected successfully");
 
-    // --- Login ------------------------------------------------------------
+    // --- Login + Join group (send both immediately, matching Dart behavior) ---
     let login_data = encode_login(&room_id);
+    debug!(room_id = %room_id, len = login_data.len(), "Sending loginreq packet");
     if let Err(e) = ws_sink.send(Message::Binary(login_data.into())).await {
-        error!("Failed to send login request: {e}");
+        let msg = format!("Failed to send login request: {e}");
+        error!("{msg}");
+        send_close_event(&message_tx, msg).await;
         return;
     }
-    debug!(room_id = %room_id, "Sent login request");
+    info!(room_id = %room_id, "Login request sent OK");
 
-    // We wait for the login response before sending the join-group message.
-    let mut logged_in = false;
+    let join_data = encode_join_group(&room_id);
+    debug!(room_id = %room_id, len = join_data.len(), "Sending joingroup packet");
+    if let Err(e) = ws_sink.send(Message::Binary(join_data.into())).await {
+        let msg = format!("Failed to send join group: {e}");
+        error!("{msg}");
+        send_close_event(&message_tx, msg).await;
+        return;
+    }
+    info!(room_id = %room_id, "Join group sent OK, entering main loop");
 
     // --- Main loop --------------------------------------------------------
     let mut heartbeat_timer = tokio::time::interval(HEARTBEAT_INTERVAL);
@@ -350,7 +388,7 @@ async fn run_douyu_ws_task(
                     error!("Failed to send heartbeat: {e}");
                     break;
                 }
-                trace!(room_id = %room_id, "Sent heartbeat");
+                debug!(room_id = %room_id, "Heartbeat sent");
             }
 
             // Incoming WebSocket frame
@@ -358,26 +396,24 @@ async fn run_douyu_ws_task(
                 match msg_opt {
                     Some(Ok(Message::Binary(data))) => {
                         let bytes: &[u8] = &data;
+                        debug!(room_id = %room_id, frame_len = bytes.len(), "Received binary frame");
 
                         // Use stt::parse_packets to extract all STT payloads.
-                        for stt_payload in stt::parse_packets(bytes) {
+                        let payloads = stt::parse_packets(bytes);
+                        if payloads.is_empty() {
+                            warn!(room_id = %room_id, frame_len = bytes.len(),
+                                "No STT payloads parsed from binary frame");
+                        }
+                        for stt_payload in payloads {
                             let stt_map = stt::stt_decode(&stt_payload);
-
-                            // Handle login response → send join group
-                            if !logged_in {
-                                if stt_map.get("type").map(|s| s.as_str()) == Some("loginres") {
-                                    logged_in = true;
-                                    debug!(room_id = %room_id, "Douyu login successful, joining group");
-                                    let join_data = encode_join_group(&room_id);
-                                    if let Err(e) = ws_sink.send(Message::Binary(join_data.into())).await {
-                                        error!("Failed to send join group: {e}");
-                                        return;
-                                    }
-                                }
-                            }
+                            let msg_type = stt_map.get("type").map(|s| s.as_str()).unwrap_or("?");
+                            debug!(room_id = %room_id, stt_type = msg_type, "Parsed STT message");
 
                             // Dispatch the message.
                             let items = dispatch_stt_message(stt_map);
+                            for item in &items {
+                                debug!(room_id = %room_id, ?item, "Dispatched danmu item");
+                            }
                             for item in items {
                                 if message_tx.send(item).await.is_err() {
                                     // Consumer dropped – exit quietly.
@@ -388,20 +424,17 @@ async fn run_douyu_ws_task(
                         }
                     }
                     Some(Ok(Message::Text(text))) => {
-                        debug!(room_id = %room_id, "Received text frame: {}", &text[..text.len().min(100)]);
+                        debug!(room_id = %room_id, len = text.len(),
+                            "Received text frame: {}", &text[..text.len().min(200)]);
                     }
                     Some(Ok(Message::Close(_))) => {
                         info!(room_id = %room_id, "WebSocket closed by server");
-                        let _ = message_tx
-                            .send(DanmuItem::Control(DanmuControlEvent::StreamClosed {
-                                message: Some("WebSocket closed by server".to_string()),
-                                action: None,
-                            }))
-                            .await;
+                        send_close_event(&message_tx, "WebSocket closed by server".to_string()).await;
                         break;
                     }
                     Some(Err(e)) => {
                         error!(room_id = %room_id, "WebSocket error: {e}");
+                        send_close_event(&message_tx, format!("WebSocket error: {e}")).await;
                         break;
                     }
                     None => {
@@ -471,6 +504,8 @@ impl DanmuProvider for DouyuDanmuProvider {
     async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmuConnection> {
         let _ = config; // Douyu doesn't need extra config for danmaku.
 
+        info!(room_id = %room_id, "DouyuDanmuProvider::connect called");
+
         // Set up channels and spawn the background task.
         let connection_id = format!("douyu-{}-{}", room_id, Uuid::new_v4());
         let (message_tx, message_rx) = mpsc::channel(MESSAGE_CHANNEL_SIZE);
@@ -478,6 +513,7 @@ impl DanmuProvider for DouyuDanmuProvider {
 
         let room_id_owned = room_id.to_string();
         let handle = tokio::spawn(run_douyu_ws_task(room_id_owned, message_tx, shutdown_rx));
+        debug!(room_id = %room_id, connection_id = %connection_id, "Background WS task spawned");
 
         let state = DouyuConnectionState {
             message_rx: Arc::new(Mutex::new(message_rx)),
@@ -511,15 +547,38 @@ impl DanmuProvider for DouyuDanmuProvider {
     }
 
     async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>> {
+        trace!(connection_id = %connection.id, "receive() called");
+
         // Look up the internal state for this connection.
         let state_arc = {
             let map = self.connections.read().await;
-            map.get(&connection.id).cloned()
+            let found = map.get(&connection.id).cloned();
+            trace!(
+                connection_id = %connection.id,
+                map_size = map.len(),
+                found = found.is_some(),
+                "Connection lookup"
+            );
+            found
         };
 
         let Some(state_arc) = state_arc else {
+            warn!(connection_id = %connection.id, "Connection not found in map");
             return Err(DanmakuError::connection("Connection not found"));
         };
+
+        // Check if the background task is still alive.
+        {
+            let state = state_arc.lock().await;
+            for (i, task) in state.tasks.iter().enumerate() {
+                trace!(
+                    connection_id = %connection.id,
+                    task_index = i,
+                    task_finished = task.is_finished(),
+                    "Background task status"
+                );
+            }
+        }
 
         // Clone the Arc so we can release the state lock before awaiting.
         let message_rx = {
@@ -533,6 +592,18 @@ impl DanmuProvider for DouyuDanmuProvider {
             rx.recv().await
         })
         .await;
+
+        match &next {
+            Ok(Some(msg)) => {
+                debug!(connection_id = %connection.id, ?msg, "receive() got message");
+            }
+            Ok(None) => {
+                warn!(connection_id = %connection.id, "receive() channel closed — background task exited");
+            }
+            Err(_) => {
+                trace!(connection_id = %connection.id, "receive() timed out (normal)");
+            }
+        }
 
         match next {
             Ok(Some(msg)) => Ok(Some(msg)),
@@ -549,6 +620,7 @@ impl DanmuProvider for DouyuDanmuProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::danmaku::message::DanmuType;
 
     // ------------------------------------------------------------------
     // Message dispatch tests
@@ -588,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_gift() {
+    fn test_dispatch_gift_ignored() {
         let mut msg = FxHashMap::default();
         msg.insert("type".to_string(), "dgb".to_string());
         msg.insert("uid".to_string(), "12345".to_string());
@@ -598,33 +670,18 @@ mod tests {
         msg.insert("gfn".to_string(), "火箭".to_string());
 
         let items = dispatch_stt_message(msg);
-        assert_eq!(items.len(), 1);
-
-        if let DanmuItem::Message(danmu) = &items[0] {
-            assert_eq!(danmu.message_type, DanmuType::Gift);
-            assert_eq!(danmu.username, "GiftUser");
-            assert!(danmu.content.contains("火箭"));
-        } else {
-            panic!("Expected DanmuItem::Message");
-        }
+        assert!(items.is_empty());
     }
 
     #[test]
-    fn test_dispatch_uenter() {
+    fn test_dispatch_uenter_ignored() {
         let mut msg = FxHashMap::default();
         msg.insert("type".to_string(), "uenter".to_string());
         msg.insert("uid".to_string(), "12345".to_string());
         msg.insert("nn".to_string(), "NewUser".to_string());
 
         let items = dispatch_stt_message(msg);
-        assert_eq!(items.len(), 1);
-
-        if let DanmuItem::Message(danmu) = &items[0] {
-            assert_eq!(danmu.message_type, DanmuType::UserJoin);
-            assert!(danmu.content.contains("NewUser"));
-        } else {
-            panic!("Expected DanmuItem::Message");
-        }
+        assert!(items.is_empty());
     }
 
     #[test]
@@ -632,7 +689,10 @@ mod tests {
         let mut msg = FxHashMap::default();
         msg.insert("type".to_string(), "comm_chatmsg".to_string());
         // chatmsg is a nested STT string
-        msg.insert("chatmsg".to_string(), "nn@=大佬/txt@=加油！/ic@=avatar123/".to_string());
+        msg.insert(
+            "chatmsg".to_string(),
+            "nn@=大佬/txt@=加油！/ic@=avatar123/".to_string(),
+        );
         msg.insert("cprice".to_string(), "500000".to_string());
         msg.insert("cet".to_string(), "60".to_string());
 
@@ -646,7 +706,10 @@ mod tests {
             let meta = danmu.metadata.as_ref().unwrap();
             assert_eq!(meta.get("price").unwrap(), &serde_json::json!(5000));
             assert_eq!(meta.get("keep_time").unwrap(), &serde_json::json!(60));
-            assert_eq!(meta.get("sc_type").unwrap(), &serde_json::json!("comm_chatmsg"));
+            assert_eq!(
+                meta.get("sc_type").unwrap(),
+                &serde_json::json!("comm_chatmsg")
+            );
         } else {
             panic!("Expected DanmuItem::Message");
         }
@@ -668,7 +731,10 @@ mod tests {
             assert_eq!(danmu.content, "高能弹幕来了！");
             let meta = danmu.metadata.as_ref().unwrap();
             assert_eq!(meta.get("price").unwrap(), &serde_json::json!(2000));
-            assert_eq!(meta.get("sc_type").unwrap(), &serde_json::json!("voice_trlt"));
+            assert_eq!(
+                meta.get("sc_type").unwrap(),
+                &serde_json::json!("voice_trlt")
+            );
         } else {
             panic!("Expected DanmuItem::Message");
         }

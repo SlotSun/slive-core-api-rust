@@ -24,6 +24,8 @@ pub struct LiveSubCategory {
     pub name: String,
     /// The id of the parent category, if any.
     pub parent_id: Option<String>,
+    /// Optional picture URL for the sub-category.
+    pub pic: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +145,9 @@ pub struct LivePlayUrl {
     pub urls: Vec<String>,
     /// The transport format.
     pub url_type: UrlType,
+    /// Optional HTTP headers the player should send when requesting the stream
+    /// (e.g. custom User-Agent for Huya).
+    pub headers: Option<Vec<(String, String)>>,
 }
 
 // ---------------------------------------------------------------------------

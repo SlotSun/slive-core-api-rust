@@ -27,8 +27,7 @@ const BASE_URL: &str = "https://www.douyu.com";
 
 const CATEGORY_ROOMS_URL: &str =
     "https://www.douyu.com/gapi/rkc/directory/mixList/2_{category_id}/{page}";
-const RECOMMEND_ROOMS_URL: &str =
-    "https://www.douyu.com/japi/weblist/apinc/allpage/6/{page}";
+const RECOMMEND_ROOMS_URL: &str = "https://www.douyu.com/japi/weblist/apinc/allpage/6/{page}";
 const SEARCH_ROOMS_URL: &str =
     "https://www.douyu.com/japi/search/api/searchShow?kw={keyword}&page={page}&pageSize=20";
 const SEARCH_ANCHORS_URL: &str = "https://www.douyu.com/japi/search/api/searchUser?kw={keyword}&page={page}&pageSize=20&filterType=1";
@@ -120,10 +119,7 @@ impl DouyuExtractor {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let enc_time = data
-            .get("enc_time")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(1) as i32;
+        let enc_time = data.get("enc_time").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
         let key = data
             .get("key")
             .and_then(|v| v.as_str())
@@ -134,11 +130,7 @@ impl DouyuExtractor {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let is_special = data
-            .get("is_special")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0)
-            == 1;
+        let is_special = data.get("is_special").and_then(|v| v.as_i64()).unwrap_or(0) == 1;
 
         let cache = EncKeyCache {
             rand_str,
@@ -157,12 +149,7 @@ impl DouyuExtractor {
     /// Compute the Douyu signing parameters for the `getH5PlayV1` API.
     ///
     /// Returns the form-encoded POST body string.
-    async fn compute_sign(
-        &self,
-        rid: &str,
-        rate: i32,
-        cdn: &str,
-    ) -> Result<String> {
+    async fn compute_sign(&self, rid: &str, rate: i32, cdn: &str) -> Result<String> {
         self.update_enc_key().await?;
 
         let cache = self.enc_key.lock().unwrap();
@@ -378,7 +365,10 @@ impl DouyuExtractor {
         let resp: JsonValue = self
             .http
             .request(reqwest::Method::POST, &url)
-            .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header(
+                "accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
             .header("accept-encoding", "gzip, deflate")
             .header("accept-language", "zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3")
             .body(sign_body)
@@ -502,9 +492,7 @@ impl LiveExtractor for DouyuExtractor {
 
     async fn get_categories(&self) -> Result<Vec<LiveCategory>> {
         // Use the mobile API which returns proper category hierarchy.
-        let json = self
-            .fetch_json("https://m.douyu.com/api/cate/list")
-            .await?;
+        let json = self.fetch_json("https://m.douyu.com/api/cate/list").await?;
 
         let data = json
             .get("data")
@@ -549,10 +537,17 @@ impl LiveExtractor for DouyuExtractor {
                     if sub_name.is_empty() {
                         return None;
                     }
+                    let icon = sub.get("icon").and_then(|v| v.as_str()).unwrap_or("");
+                    let pic = if icon.is_empty() {
+                        None
+                    } else {
+                        Some(icon.to_string())
+                    };
                     Some(LiveSubCategory {
                         id: sub_id,
                         name: sub_name,
                         parent_id: Some(cate1_id.clone()),
+                        pic,
                     })
                 })
                 .collect();
@@ -581,8 +576,14 @@ impl LiveExtractor for DouyuExtractor {
         // Douyu search requires specific headers and a cookie with dy_did.
         let did = generate_random_did();
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(reqwest::header::REFERER, "https://www.douyu.com/search/".parse().unwrap());
-        headers.insert(reqwest::header::COOKIE, format!("dy_did={did};acf_did={did}").parse().unwrap());
+        headers.insert(
+            reqwest::header::REFERER,
+            "https://www.douyu.com/search/".parse().unwrap(),
+        );
+        headers.insert(
+            reqwest::header::COOKIE,
+            format!("dy_did={did};acf_did={did}").parse().unwrap(),
+        );
         let text = self.http.get_text_with_headers(&url, &headers).await?;
         let json: JsonValue = serde_json::from_str(&text)?;
 
@@ -629,8 +630,14 @@ impl LiveExtractor for DouyuExtractor {
         // Douyu search requires specific headers and a cookie with dy_did.
         let did = generate_random_did();
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(reqwest::header::REFERER, "https://www.douyu.com/search/".parse().unwrap());
-        headers.insert(reqwest::header::COOKIE, format!("dy_did={did};acf_did={did}").parse().unwrap());
+        headers.insert(
+            reqwest::header::REFERER,
+            "https://www.douyu.com/search/".parse().unwrap(),
+        );
+        headers.insert(
+            reqwest::header::COOKIE,
+            format!("dy_did={did};acf_did={did}").parse().unwrap(),
+        );
         let text = self.http.get_text_with_headers(&url, &headers).await?;
         let json: JsonValue = serde_json::from_str(&text)?;
 
@@ -786,7 +793,10 @@ impl LiveExtractor for DouyuExtractor {
         let resp: JsonValue = self
             .http
             .request(reqwest::Method::POST, &url)
-            .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header(
+                "accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
             .header("accept-encoding", "gzip, deflate")
             .header("accept-language", "zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3")
             .body(sign_body)
@@ -838,14 +848,25 @@ impl LiveExtractor for DouyuExtractor {
         }
 
         if qualities.is_empty() {
-            qualities.push(LivePlayQuality {
-                quality: "原画".to_string(),
-                data: serde_json::to_string(&DouyuPlayData {
-                    rate: 0,
-                    cdns,
-                })
-                .unwrap_or_default(),
-            });
+            // Fallback: standard Douyu quality tiers.
+            let fallback_rates: &[(&str, i32)] = &[
+                ("原画", 0),
+                ("蓝光4M", 400),
+                ("蓝光2M", 250),
+                ("超清", 150),
+                ("高清", 80),
+                ("流畅", 50),
+            ];
+            for (name, rate) in fallback_rates {
+                qualities.push(LivePlayQuality {
+                    quality: name.to_string(),
+                    data: serde_json::to_string(&DouyuPlayData {
+                        rate: *rate,
+                        cdns: cdns.clone(),
+                    })
+                    .unwrap_or_default(),
+                });
+            }
         }
 
         Ok(qualities)
@@ -864,7 +885,10 @@ impl LiveExtractor for DouyuExtractor {
 
         let mut urls: Vec<String> = Vec::new();
         for cdn in &play_data.cdns {
-            match self.get_play_url(&detail.room_id, play_data.rate, cdn).await {
+            match self
+                .get_play_url(&detail.room_id, play_data.rate, cdn)
+                .await
+            {
                 Ok(url) if !url.is_empty() => urls.push(url),
                 _ => {}
             }
@@ -877,6 +901,7 @@ impl LiveExtractor for DouyuExtractor {
         Ok(LivePlayUrl {
             urls,
             url_type: UrlType::Flv,
+            headers: None,
         })
     }
 

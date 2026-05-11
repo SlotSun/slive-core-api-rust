@@ -205,9 +205,7 @@ mod tests {
     async fn test_gzip_compression_support() {
         use reqwest::header::HeaderValue;
 
-        let client = Client::builder()
-            .build()
-            .expect("failed to build client");
+        let client = Client::builder().build().expect("failed to build client");
 
         // Test that the client can handle gzip-compressed responses
         // Using httpbin.org/gzip which returns gzip-compressed JSON

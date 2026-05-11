@@ -11,11 +11,11 @@ use crate::extractor::platforms::douyin::models::*;
 use crate::extractor::platforms::douyin::utils::GlobalTtwidManager;
 use crate::extractor::{LiveExtractor, Result};
 use async_trait::async_trait;
-use std::sync::Mutex;
 use regex::Regex;
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::sync::Mutex;
 use tokio::sync::OnceCell;
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,8 @@ impl DouyinExtractor {
             Ok(t) => t,
             Err(_) => return room_id.to_string(),
         };
-        let re = Regex::new(r#"mysteryMan\":1,\"webRid\":\"([^\"]+)\",\"desensitizedNickname"#).unwrap();
+        let re =
+            Regex::new(r#"mysteryMan\":1,\"webRid\":\"([^\"]+)\",\"desensitizedNickname"#).unwrap();
         match re.captures(&html).and_then(|c| c.get(1)) {
             Some(m) => m.as_str().to_string(),
             None => room_id.to_string(),
@@ -150,7 +151,7 @@ impl DouyinExtractor {
     async fn ensure_ttwid(&self) -> &str {
         self.ttwid
             .get_or_init(|| async {
-                GlobalTtwidManager::ensure_global_ttwid(self.http.inner())
+                GlobalTtwidManager::ensure_global_ttwid(&self.http.inner())
                     .await
                     .unwrap_or_else(|_| {
                         tracing::warn!("Failed to fetch ttwid, using default");
@@ -225,7 +226,9 @@ impl DouyinExtractor {
         let ttwid = Self::extract_ttwid(&resp);
         let text = resp.text().await?;
         if text.is_empty() {
-            return Err(ExtractorError::Other("empty response from Douyin API".into()));
+            return Err(ExtractorError::Other(
+                "empty response from Douyin API".into(),
+            ));
         }
         let json: JsonValue = serde_json::from_str(&text)?;
         Ok((json, ttwid))
@@ -369,7 +372,9 @@ impl DouyinExtractor {
 
     /// Debug: fetch raw search response as string.
     pub async fn search_rooms_debug(&self, keyword: &str) -> Result<String> {
-        let encoded_kw = percent_encoding::utf8_percent_encode(keyword, percent_encoding::NON_ALPHANUMERIC).to_string();
+        let encoded_kw =
+            percent_encoding::utf8_percent_encode(keyword, percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
         let mut params = HashMap::new();
         params.insert("channel", "channel_pc_web");
         params.insert("search_channel", "aweme_live");
@@ -422,13 +427,14 @@ impl LiveExtractor for DouyinExtractor {
     async fn get_categories(&self) -> Result<Vec<LiveCategory>> {
         // Douyin categories are embedded in the homepage HTML (like Dart reference).
         let headers = self.request_headers().await;
-        let html = self.http.get_text_with_headers("https://live.douyin.com/", &headers).await?;
+        let html = self
+            .http
+            .get_text_with_headers("https://live.douyin.com/", &headers)
+            .await?;
 
         // Extract categoryData from RENDER_DATA script via regex.
-        let re = regex::Regex::new(
-            r#"\{\\"pathname\\":\\"\/\\",\\"categoryData.*?\],"#,
-        )
-        .map_err(|e| ExtractorError::Other(e.to_string()))?;
+        let re = regex::Regex::new(r#"\{\\"pathname\\":\\"\/\\",\\"categoryData.*?\],"#)
+            .map_err(|e| ExtractorError::Other(e.to_string()))?;
 
         let render_data = re
             .find(&html)
@@ -441,8 +447,7 @@ impl LiveExtractor for DouyinExtractor {
             })
             .ok_or_else(|| ExtractorError::Other("categoryData not found in HTML".into()))?;
 
-        let json: JsonValue =
-            serde_json::from_str(&render_data).unwrap_or(JsonValue::Null);
+        let json: JsonValue = serde_json::from_str(&render_data).unwrap_or(JsonValue::Null);
 
         let category_arr = json
             .get("categoryData")
@@ -476,6 +481,7 @@ impl LiveExtractor for DouyinExtractor {
                 id: id.clone(),
                 name: name.clone(),
                 parent_id: Some(id.clone()),
+                pic: None,
             });
 
             if let Some(sub_list) = item.get("sub_partition").and_then(|v| v.as_array()) {
@@ -490,11 +496,16 @@ impl LiveExtractor for DouyinExtractor {
                         .and_then(|v| v.as_i64().map(|i| i.to_string()))
                         .unwrap_or_default();
                     let sub_id = format!("{sub_id_str},{sub_type}");
-                    let sub_name = sp.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let sub_name = sp
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     sub_categories.push(LiveSubCategory {
                         id: sub_id,
                         name: sub_name,
                         parent_id: Some(id.clone()),
+                        pic: None,
                     });
                 }
             }
@@ -512,7 +523,9 @@ impl LiveExtractor for DouyinExtractor {
     async fn search_rooms(&self, keyword: &str, page: u32) -> Result<LiveSearchRoomResult> {
         let offset = (page.saturating_sub(1)) * 10;
         let offset_str = offset.to_string();
-        let encoded_kw = percent_encoding::utf8_percent_encode(keyword, percent_encoding::NON_ALPHANUMERIC).to_string();
+        let encoded_kw =
+            percent_encoding::utf8_percent_encode(keyword, percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
         let count_str = "10";
         let mut params = HashMap::new();
         params.insert("channel", "channel_pc_web");
@@ -528,7 +541,10 @@ impl LiveExtractor for DouyinExtractor {
         let json = self.fetch_json(&url).await?;
 
         let empty = vec![];
-        let items_arr = json.get("data").and_then(|v| v.as_array()).unwrap_or(&empty);
+        let items_arr = json
+            .get("data")
+            .and_then(|v| v.as_array())
+            .unwrap_or(&empty);
 
         let mut items: Vec<LiveRoomItem> = Vec::new();
         for item in items_arr {
@@ -594,9 +610,7 @@ impl LiveExtractor for DouyinExtractor {
     }
 
     async fn search_anchors(&self, _keyword: &str, _page: u32) -> Result<LiveSearchAnchorResult> {
-        Err(ExtractorError::Other(
-            "抖音暂不支持搜索主播".into(),
-        ))
+        Err(ExtractorError::Other("抖音暂不支持搜索主播".into()))
     }
 
     async fn get_category_rooms(
@@ -688,7 +702,11 @@ impl LiveExtractor for DouyinExtractor {
             let online = item
                 .get("room_view_stats")
                 .and_then(|s| s.get("display_value"))
-                .and_then(|v| v.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| v.as_u64()))
+                .and_then(|v| {
+                    v.as_str()
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .or_else(|| v.as_u64())
+                })
                 .unwrap_or(0);
 
             items.push(LiveRoomItem {
@@ -790,13 +808,25 @@ impl LiveExtractor for DouyinExtractor {
         let online = room
             .get("room_view_stats")
             .and_then(|s| s.get("display_value"))
-            .and_then(|v| v.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| v.as_u64()))
+            .and_then(|v| {
+                v.as_str()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .or_else(|| v.as_u64())
+            })
             .unwrap_or(0);
 
-        let user_name = owner.get("nickname").and_then(|v| v.as_str()).unwrap_or(
-            user_data.get("nickname").and_then(|v| v.as_str()).unwrap_or("")
-        ).to_string();
-        let user_avatar = owner.get("avatar_thumb")
+        let user_name = owner
+            .get("nickname")
+            .and_then(|v| v.as_str())
+            .unwrap_or(
+                user_data
+                    .get("nickname")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+            )
+            .to_string();
+        let user_avatar = owner
+            .get("avatar_thumb")
             .or_else(|| user_data.get("avatar_thumb"))
             .and_then(|v| v.get("url_list"))
             .and_then(|v| v.as_array())
@@ -834,7 +864,12 @@ impl LiveExtractor for DouyinExtractor {
     async fn get_play_qualities(&self, detail: &LiveRoomDetail) -> Result<Vec<LivePlayQuality>> {
         let stream_url = match &detail.data {
             Some(d) => d,
-            None => return Ok(vec![LivePlayQuality { quality: "默认".into(), data: "默认".into() }]),
+            None => {
+                return Ok(vec![LivePlayQuality {
+                    quality: "默认".into(),
+                    data: "默认".into(),
+                }]);
+            }
         };
 
         // Try live_core_sdk_data.pull_data first (new format).
@@ -860,17 +895,31 @@ impl LiveExtractor for DouyinExtractor {
 
             for q in q_list {
                 let _level = q.get("level").and_then(|v| v.as_i64()).unwrap_or(0);
-                let name = q.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = q
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let sdk_key = q.get("sdk_key").and_then(|v| v.as_str()).unwrap_or("");
 
                 let mut urls: Vec<String> = Vec::new();
                 if let Some(map) = sd_map {
-                    if let Some(flv) = map.get(sdk_key).and_then(|v| v.get("main")).and_then(|v| v.get("flv")).and_then(|v| v.as_str()) {
+                    if let Some(flv) = map
+                        .get(sdk_key)
+                        .and_then(|v| v.get("main"))
+                        .and_then(|v| v.get("flv"))
+                        .and_then(|v| v.as_str())
+                    {
                         if !flv.is_empty() {
                             urls.push(flv.to_string());
                         }
                     }
-                    if let Some(hls) = map.get(sdk_key).and_then(|v| v.get("main")).and_then(|v| v.get("hls")).and_then(|v| v.as_str()) {
+                    if let Some(hls) = map
+                        .get(sdk_key)
+                        .and_then(|v| v.get("main"))
+                        .and_then(|v| v.get("hls"))
+                        .and_then(|v| v.as_str())
+                    {
                         if !hls.is_empty() {
                             urls.push(hls.to_string());
                         }
@@ -886,35 +935,77 @@ impl LiveExtractor for DouyinExtractor {
             }
             qualities.sort_by(|a, b| {
                 // Sort by level descending (higher quality first).
-                let la = q_list.iter().find(|q| q.get("name").and_then(|v| v.as_str()) == Some(&a.quality)).and_then(|q| q.get("level")).and_then(|v| v.as_i64()).unwrap_or(0);
-                let lb = q_list.iter().find(|q| q.get("name").and_then(|v| v.as_str()) == Some(&b.quality)).and_then(|q| q.get("level")).and_then(|v| v.as_i64()).unwrap_or(0);
+                let la = q_list
+                    .iter()
+                    .find(|q| q.get("name").and_then(|v| v.as_str()) == Some(&a.quality))
+                    .and_then(|q| q.get("level"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let lb = q_list
+                    .iter()
+                    .find(|q| q.get("name").and_then(|v| v.as_str()) == Some(&b.quality))
+                    .and_then(|q| q.get("level"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
                 lb.cmp(&la)
             });
         }
 
         // Fallback: use flv_pull_url / hls_pull_url_map.
+        // Keys like "FULL_HD1", "HD1", "SD1", "SD2" map to quality levels.
         if qualities.is_empty() {
             let flv_map = stream_url.get("flv_pull_url").and_then(|v| v.as_object());
-            let hls_map = stream_url.get("hls_pull_url_map").and_then(|v| v.as_object());
+            let hls_map = stream_url
+                .get("hls_pull_url_map")
+                .and_then(|v| v.as_object());
 
-            let mut all_urls: Vec<String> = Vec::new();
-            if let Some(m) = flv_map {
-                all_urls.extend(m.values().filter_map(|v| v.as_str().map(String::from)));
-            }
-            if let Some(m) = hls_map {
-                all_urls.extend(m.values().filter_map(|v| v.as_str().map(String::from)));
+            // Standard Douyin quality key → display name mapping.
+            let quality_names: &[(&str, &str)] = &[
+                ("FULL_HD1", "蓝光"),
+                ("HD1", "超清"),
+                ("SD1", "高清"),
+                ("SD2", "流畅"),
+            ];
+
+            for (key, name) in quality_names {
+                let mut urls: Vec<String> = Vec::new();
+                if let Some(url) = flv_map.and_then(|m| m.get(*key)).and_then(|v| v.as_str()) {
+                    urls.push(url.to_string());
+                }
+                if let Some(url) = hls_map.and_then(|m| m.get(*key)).and_then(|v| v.as_str()) {
+                    urls.push(url.to_string());
+                }
+                if !urls.is_empty() {
+                    qualities.push(LivePlayQuality {
+                        quality: name.to_string(),
+                        data: serde_json::to_string(&urls).unwrap_or_default(),
+                    });
+                }
             }
 
-            if !all_urls.is_empty() {
-                qualities.push(LivePlayQuality {
-                    quality: "默认".into(),
-                    data: serde_json::to_string(&all_urls).unwrap_or_default(),
-                });
+            // If no known keys matched, collect all URLs as a single fallback.
+            if qualities.is_empty() {
+                let mut all_urls: Vec<String> = Vec::new();
+                if let Some(m) = flv_map {
+                    all_urls.extend(m.values().filter_map(|v| v.as_str().map(String::from)));
+                }
+                if let Some(m) = hls_map {
+                    all_urls.extend(m.values().filter_map(|v| v.as_str().map(String::from)));
+                }
+                if !all_urls.is_empty() {
+                    qualities.push(LivePlayQuality {
+                        quality: "默认".into(),
+                        data: serde_json::to_string(&all_urls).unwrap_or_default(),
+                    });
+                }
             }
         }
 
         if qualities.is_empty() {
-            qualities.push(LivePlayQuality { quality: "默认".into(), data: "默认".into() });
+            qualities.push(LivePlayQuality {
+                quality: "默认".into(),
+                data: "默认".into(),
+            });
         }
 
         Ok(qualities)
@@ -936,7 +1027,7 @@ impl LiveExtractor for DouyinExtractor {
         } else {
             UrlType::M3u8
         };
-        Ok(LivePlayUrl { urls, url_type })
+        Ok(LivePlayUrl { urls, url_type, headers: None })
     }
 
     async fn get_live_status(&self, room_id: &str) -> Result<bool> {
