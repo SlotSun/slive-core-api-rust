@@ -227,3 +227,27 @@ async fn test_search_anchors() {
         Err(e) => println!("  ⚠️ 搜索主播失败: {}", e),
     }
 }
+
+#[tokio::test]
+async fn test_get_recommend_rooms() {
+    ensure_tls_provider();
+    let ext = BilibiliExtractor::new();
+    match ext.get_recommend_rooms(1).await {
+        Ok(result) => {
+            println!("=== 推荐房间 ===");
+            println!(
+                "  房间数: {} (has_more={})",
+                result.items.len(),
+                result.has_more
+            );
+            for item in result.items.iter().take(5) {
+                println!(
+                    "  - [{}] {} ({} 在线)",
+                    item.room_id, item.user_name, item.online
+                );
+            }
+            assert!(!result.items.is_empty(), "recommend rooms should not be empty");
+        }
+        Err(e) => println!("  ⚠️ 获取推荐房间失败: {}", e),
+    }
+}

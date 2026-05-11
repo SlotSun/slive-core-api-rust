@@ -29,7 +29,7 @@ const CATEGORIES_URL: &str = "https://api.live.bilibili.com/room/v1/Area/getList
 #[allow(dead_code)]
 const CATEGORY_ROOMS_URL: &str = "https://api.live.bilibili.com/xlive/web-interface/v1/second/getList?platform=web&parent_area_id={parent_id}&area_id={area_id}&page={page}";
 const RECOMMEND_ROOMS_URL: &str =
-    "https://api.live.bilibili.com/xlive/web-interface/v1/webMain/getList?page={page}";
+    "https://api.live.bilibili.com/xlive/web-interface/v1/webMain/getList";
 const ROOM_INFO_URL: &str =
     "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id={room_id}";
 const ROOM_INIT_URL: &str = "https://api.live.bilibili.com/room/v1/Room/room_init?id={room_id}";
@@ -720,16 +720,20 @@ impl LiveExtractor for BilibiliExtractor {
     }
 
     async fn get_recommend_rooms(&self, page: u32) -> Result<LiveCategoryResult> {
-        let url = RECOMMEND_ROOMS_URL.replace("{page}", &page.to_string());
+        let params = vec![
+            ("platform".to_string(), "web".to_string()),
+            ("page".to_string(), page.to_string()),
+        ];
 
-        let json = self.fetch_json(&url).await?;
+        let json = self.wbi_get(RECOMMEND_ROOMS_URL, params).await?;
+        Self::check_response(&json)?;
 
         let data = json
             .get("data")
             .ok_or_else(|| ExtractorError::Other("missing data".into()))?;
 
         let list = data
-            .get("list")
+            .get("recommend_room_list")
             .and_then(|v| v.as_array())
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
