@@ -120,7 +120,7 @@ async fn test_get_room_detail() {
 
     ext.set_cookies(common::bilibili_cookies());
 
-    let room_id = "6";
+    let room_id = "7777";
 
     match ext.get_room_detail(room_id).await {
         Ok(detail) => {
@@ -142,7 +142,7 @@ async fn test_get_room_detail() {
             assert_eq!(detail.platform, "bilibili");
             assert!(!detail.room_id.is_empty());
             assert!(detail.data.is_some(), "data should be populated");
-
+            println!("str:{:?}",detail.danmaku_data);
             if detail.status {
                 let qualities = ext
                     .get_play_qualities(&detail)
@@ -225,6 +225,39 @@ async fn test_search_anchors() {
             }
         }
         Err(e) => println!("  ⚠️ 搜索主播失败: {}", e),
+    }
+}
+
+#[tokio::test]
+async fn test_room_34_detail_and_status() {
+    ensure_tls_provider();
+    let ext = BilibiliExtractor::new();
+    ext.set_cookies(common::bilibili_cookies());
+
+    let room_id = "34";
+    println!("=== 测试房间 {} ===", room_id);
+
+    // 1. get_room_detail
+    match ext.get_room_detail(room_id).await {
+        Ok(detail) => {
+            println!("  房间ID: {}", detail.room_id);
+            println!("  标题:   {}", detail.title);
+            println!("  主播:   {}", detail.user_name);
+            println!("  在线:   {}", detail.online);
+            println!("  状态:   {}", if detail.status { "直播中" } else { "未开播" });
+            println!("  平台:   {}", detail.platform);
+            println!("  data:   {}", if detail.data.is_some() { "有" } else { "无" });
+            println!("  danmaku_data: {}", if detail.danmaku_data.is_some() { "有" } else { "无" });
+        }
+        Err(e) => println!("  ⚠️ get_room_detail 失败: {}", e),
+    }
+
+    // 2. get_live_status
+    match ext.get_live_status(room_id).await {
+        Ok(status) => {
+            println!("  get_live_status: {}", if status { "直播中" } else { "未开播" });
+        }
+        Err(e) => println!("  ⚠️ get_live_status 失败: {}", e),
     }
 }
 

@@ -34,8 +34,6 @@ const ROOM_INFO_URL: &str =
     "https://api.live.bilibili.com/xlive/web-room/v1/index/getInfoByRoom?room_id={room_id}";
 const ROOM_INIT_URL: &str = "https://api.live.bilibili.com/room/v1/Room/room_init?id={room_id}";
 const PLAY_INFO_URL: &str = "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id={room_id}&qn={qn}&platform=h5&protocol=0,1&format=0,1,2&codec=0,1&dolby=5&panorama=1";
-const DANMU_INFO_URL: &str =
-    "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?id={room_id}";
 const SUPER_CHAT_URL: &str =
     "https://api.live.bilibili.com/xlive/general-room/v1/giftMsg/getSuperChatMsg?room_id={room_id}";
 
@@ -300,9 +298,12 @@ impl BilibiliExtractor {
     // ------------------------------------------------------------------
 
     /// Fetch danmu token and host list from the `getDanmuInfo` API.
+    ///
+    /// Uses WBI signing — the plain endpoint returns -352/-412 without it.
     async fn fetch_danmu_info(&self, room_id: u64) -> Result<BilibiliDanmakuData> {
-        let url = DANMU_INFO_URL.replace("{room_id}", &room_id.to_string());
-        let json = self.fetch_json(&url).await?;
+        let base = "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo";
+        let params = vec![("id".to_string(), room_id.to_string())];
+        let json = self.wbi_get(base, params).await?;
         Self::check_response(&json)?;
 
         let data = json
@@ -469,7 +470,7 @@ impl LiveExtractor for BilibiliExtractor {
 
         let mut categories = Vec::with_capacity(data.len());
         for area in data {
-            let id = area.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+            let id = json_str_or_int(area, "id");
             let name = str_field(area, "name");
 
             let mut sub_categories = Vec::new();
@@ -500,7 +501,7 @@ impl LiveExtractor for BilibiliExtractor {
             }
 
             categories.push(LiveCategory {
-                id: id.to_string(),
+                id,
                 name,
                 sub_categories,
             });
