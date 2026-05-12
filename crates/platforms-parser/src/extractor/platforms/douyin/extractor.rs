@@ -15,7 +15,7 @@ use regex::Regex;
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use tokio::sync::OnceCell;
 use url::form_urlencoded;
 
@@ -89,7 +89,7 @@ impl DouyinExtractor {
 
     /// Set additional auth cookies (e.g. sessionid, uid_tt) for APIs that require login.
     pub fn with_auth_cookies(self, cookies: &str) -> Self {
-        *self.auth_cookies.lock().unwrap() = Some(cookies.to_string());
+        *self.auth_cookies.lock() = Some(cookies.to_string());
         self
     }
 
@@ -121,7 +121,7 @@ impl DouyinExtractor {
             .join("&");
 
         // Sign with A-Bogus
-        let signed_query = self.abogus.lock().unwrap().generate_abogus(&query, "").0;
+        let signed_query = self.abogus.lock().generate_abogus(&query, "").0;
 
         // Build final URL
         if base_url.ends_with('?') || base_url.ends_with('/') {
@@ -191,7 +191,7 @@ impl DouyinExtractor {
     /// Matches Dart `getRequestHeaders`: Authority, Referer, Cookie.
     async fn request_headers(&self) -> HeaderMap {
         let ttwid = self.ensure_ttwid().await;
-        let auth = self.auth_cookies.lock().unwrap().clone();
+        let auth = self.auth_cookies.lock().clone();
         let cookie = match auth {
             Some(ref auth) => format!("ttwid={ttwid}; {auth}"),
             None => format!("ttwid={ttwid}"),
@@ -417,7 +417,7 @@ impl DouyinExtractor {
                 .map_err(|e| ExtractorError::Other(format!("URL build error: {e}")))?
                 .to_string();
         let ttwid = self.ensure_ttwid().await;
-        let auth = self.auth_cookies.lock().unwrap().clone();
+        let auth = self.auth_cookies.lock().clone();
         let cookie = match auth {
             Some(ref auth) => format!("ttwid={ttwid}; {auth}"),
             None => format!("ttwid={ttwid}"),
@@ -465,7 +465,7 @@ impl LiveExtractor for DouyinExtractor {
     }
 
     fn set_cookies(&self, cookies: &str) {
-        *self.auth_cookies.lock().unwrap() = Some(cookies.to_string());
+        *self.auth_cookies.lock() = Some(cookies.to_string());
     }
 
     fn supports_url(&self, url: &str) -> bool {
@@ -634,7 +634,7 @@ impl LiveExtractor for DouyinExtractor {
         );
         let cookie = {
             let ttwid = self.ensure_ttwid().await;
-            let auth = self.auth_cookies.lock().unwrap().clone();
+            let auth = self.auth_cookies.lock().clone();
             match auth {
                 Some(ref auth) => format!("ttwid={ttwid}; {auth}"),
                 None => format!("ttwid={ttwid}"),

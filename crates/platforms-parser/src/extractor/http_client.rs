@@ -1,4 +1,5 @@
-use std::sync::{Mutex, OnceLock, RwLock};
+use std::sync::OnceLock;
+use parking_lot::{Mutex, RwLock};
 use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -49,12 +50,12 @@ impl HttpClient {
 
     /// Set cookies that will be sent with every request.
     pub fn set_cookies(&self, cookies: &str) {
-        *self.cookies.lock().unwrap() = cookies.to_string();
+        *self.cookies.lock() = cookies.to_string();
     }
 
     /// Get the current cookies.
     pub fn cookies(&self) -> String {
-        self.cookies.lock().unwrap().clone()
+        self.cookies.lock().clone()
     }
 
     /// Replace the inner `reqwest::Client` with one using a different user-agent.
@@ -70,13 +71,13 @@ impl HttpClient {
             .default_headers(self.builder_config.default_headers.clone())
             .build()
             .map_err(ExtractorError::HttpError)?;
-        *self.client.write().unwrap() = new_client;
+        *self.client.write() = new_client;
         Ok(())
     }
 
     /// Get a reference to the inner `reqwest::Client` for advanced use cases.
     pub fn inner(&self) -> Client {
-        self.client.read().unwrap().clone()
+        self.client.read().clone()
     }
 
     // ------------------------------------------------------------------
@@ -86,7 +87,7 @@ impl HttpClient {
     /// GET request returning response text.
     pub async fn get_text(&self, url: &str) -> Result<String> {
         let resp = self
-            .execute_with_retry(|| self.attach_cookies(self.client.read().unwrap().get(url)))
+            .execute_with_retry(|| self.attach_cookies(self.client.read().get(url)))
             .await?;
         Ok(resp.text().await?)
     }
@@ -115,7 +116,7 @@ impl HttpClient {
     ) -> Result<String> {
         let resp = self
             .execute_with_retry(|| {
-                let mut req = self.client.read().unwrap().get(url);
+                let mut req = self.client.read().get(url);
                 req = self.attach_cookies(req);
                 for (key, value) in extra_headers.iter() {
                     req = req.header(key.clone(), value.clone());
@@ -134,7 +135,7 @@ impl HttpClient {
     ) -> Result<String> {
         let resp = self
             .execute_with_retry(|| {
-                let req = self.client.read().unwrap().post(url);
+                let req = self.client.read().post(url);
                 self.attach_cookies(req).form(form)
             })
             .await?;
@@ -155,7 +156,7 @@ impl HttpClient {
     pub async fn post_json_text<B: serde::Serialize>(&self, url: &str, body: &B) -> Result<String> {
         let resp = self
             .execute_with_retry(|| {
-                let req = self.client.read().unwrap().post(url);
+                let req = self.client.read().post(url);
                 self.attach_cookies(req).json(body)
             })
             .await?;
@@ -176,18 +177,18 @@ impl HttpClient {
     /// and default headers already attached. The caller can add more headers
     /// or body before calling `.send()`.
     pub fn request(&self, method: Method, url: &str) -> reqwest::RequestBuilder {
-        let req = self.client.read().unwrap().request(method, url);
+        let req = self.client.read().request(method, url);
         self.attach_cookies(req)
     }
 
     /// Convenience: build a GET request with cookies attached.
     pub fn get(&self, url: &str) -> reqwest::RequestBuilder {
-        self.attach_cookies(self.client.read().unwrap().get(url))
+        self.attach_cookies(self.client.read().get(url))
     }
 
     /// Convenience: build a POST request with cookies attached.
     pub fn post(&self, url: &str) -> reqwest::RequestBuilder {
-        self.attach_cookies(self.client.read().unwrap().post(url))
+        self.attach_cookies(self.client.read().post(url))
     }
 
     // ------------------------------------------------------------------
@@ -196,7 +197,7 @@ impl HttpClient {
 
     /// Attach cookies to a request builder if any are set.
     fn attach_cookies(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        let cookies = self.cookies.lock().unwrap().clone();
+        let cookies = self.cookies.lock().clone();
         if cookies.is_empty() {
             req
         } else {

@@ -64,7 +64,7 @@ pub struct DouyuExtractor {
     http: HttpClient,
     room_url_re: Regex,
     /// Cached encryption keys (protected by Mutex for async access).
-    enc_key: std::sync::Mutex<Option<EncKeyCache>>,
+    enc_key: parking_lot::Mutex<Option<EncKeyCache>>,
 }
 
 impl DouyuExtractor {
@@ -74,7 +74,7 @@ impl DouyuExtractor {
                 .build()
                 .expect("failed to build HTTP client"),
             room_url_re: Regex::new(r"(?:https?://)?(?:www\.)?douyu\.com/(\d+)").unwrap(),
-            enc_key: std::sync::Mutex::new(None),
+            enc_key: parking_lot::Mutex::new(None),
         }
     }
 
@@ -99,7 +99,7 @@ impl DouyuExtractor {
     async fn update_enc_key(&self) -> Result<()> {
         // Check if cache is still valid.
         {
-            let cache = self.enc_key.lock().unwrap();
+            let cache = self.enc_key.lock();
             if let Some(ref k) = *cache {
                 if k.expire_at > chrono::Utc::now().timestamp() {
                     return Ok(());
@@ -141,7 +141,7 @@ impl DouyuExtractor {
             expire_at: chrono::Utc::now().timestamp() + 86400,
         };
 
-        let mut lock = self.enc_key.lock().unwrap();
+        let mut lock = self.enc_key.lock();
         *lock = Some(cache);
         Ok(())
     }
@@ -152,7 +152,7 @@ impl DouyuExtractor {
     async fn compute_sign(&self, rid: &str, rate: i32, cdn: &str) -> Result<String> {
         self.update_enc_key().await?;
 
-        let cache = self.enc_key.lock().unwrap();
+        let cache = self.enc_key.lock();
         let k = cache.as_ref().unwrap();
 
         let ts = chrono::Utc::now().timestamp();

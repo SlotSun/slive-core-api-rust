@@ -4,7 +4,7 @@
 //! to extract embedded JSON stream metadata, then builds play URLs through the
 //! TARS-based CDN token API.
 
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -89,7 +89,7 @@ impl HuyaExtractor {
     /// Set a custom User-Agent for all HTTP requests (e.g. HYSDK_UA).
     /// Also stores the value so it can be included in play URL headers.
     pub fn set_sdk_ua(&self, ua: &str) {
-        *self.sdk_ua.lock().unwrap() = ua.to_string();
+        *self.sdk_ua.lock() = ua.to_string();
         if let Err(e) = self.http.set_user_agent(ua) {
             tracing::warn!("Failed to set Huya SDK UA: {e}");
         }
@@ -97,7 +97,7 @@ impl HuyaExtractor {
 
     /// Get the current SDK UA string (empty if not set).
     fn get_sdk_ua(&self) -> String {
-        self.sdk_ua.lock().unwrap().clone()
+        self.sdk_ua.lock().clone()
     }
 
     fn room_page_url(room_id: &str) -> String {

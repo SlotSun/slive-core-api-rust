@@ -1,7 +1,7 @@
 //! Bilibili (哔哩哔哩) live streaming platform extractor.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -105,7 +105,7 @@ impl BilibiliExtractor {
     /// Equivalent to Dart's `getAccessId()`.
     async fn get_access_id(&self) -> Result<String> {
         {
-            let cached = self.access_id.lock().unwrap();
+            let cached = self.access_id.lock();
             if !cached.is_empty() {
                 return Ok(cached.clone());
             }
@@ -126,7 +126,7 @@ impl BilibiliExtractor {
             .map(|m| m.as_str().replace('\\', ""))
             .unwrap_or_default();
 
-        let mut cached = self.access_id.lock().unwrap();
+        let mut cached = self.access_id.lock();
         *cached = access_id.clone();
         Ok(access_id)
     }
@@ -141,7 +141,7 @@ impl BilibiliExtractor {
     /// user cookies (SESSDATA) are present.
     async fn ensure_buvid(&self) {
         {
-            let b3 = self.buvid3.lock().unwrap();
+            let b3 = self.buvid3.lock();
             if !b3.is_empty() {
                 return;
             }
@@ -157,7 +157,7 @@ impl BilibiliExtractor {
             Err(e) => {
                 warn!("Failed to fetch buvid from SPI: {}", e);
                 // Mark as attempted so we don't retry every request.
-                let mut b3 = self.buvid3.lock().unwrap();
+                let mut b3 = self.buvid3.lock();
                 if b3.is_empty() {
                     *b3 = "_failed".to_string();
                 }
@@ -169,7 +169,7 @@ impl BilibiliExtractor {
             Some(d) => d,
             None => {
                 warn!("Missing data in buvid SPI response");
-                let mut b3 = self.buvid3.lock().unwrap();
+                let mut b3 = self.buvid3.lock();
                 if b3.is_empty() {
                     *b3 = "_failed".to_string();
                 }
@@ -190,7 +190,7 @@ impl BilibiliExtractor {
 
         if b3.is_empty() {
             warn!("SPI returned empty buvid3");
-            let mut cached = self.buvid3.lock().unwrap();
+            let mut cached = self.buvid3.lock();
             if cached.is_empty() {
                 *cached = "_failed".to_string();
             }
@@ -198,11 +198,11 @@ impl BilibiliExtractor {
         }
 
         {
-            let mut cached3 = self.buvid3.lock().unwrap();
+            let mut cached3 = self.buvid3.lock();
             *cached3 = b3.clone();
         }
         {
-            let mut cached4 = self.buvid4.lock().unwrap();
+            let mut cached4 = self.buvid4.lock();
             *cached4 = b4.clone();
         }
 
@@ -432,8 +432,8 @@ impl LiveExtractor for BilibiliExtractor {
         if cookies.contains("buvid3") {
             self.http.set_cookies(cookies);
         } else {
-            let buvid3 = self.buvid3.lock().unwrap().clone();
-            let buvid4 = self.buvid4.lock().unwrap().clone();
+            let buvid3 = self.buvid3.lock().clone();
+            let buvid4 = self.buvid4.lock().clone();
             if buvid3.is_empty() || buvid3 == "_failed" {
                 // buvid 还没获取或获取失败，先直接设置
                 self.http.set_cookies(cookies);
