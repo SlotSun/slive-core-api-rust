@@ -70,10 +70,13 @@ async fn test_huya_danmaku() {
     println!("  sub_sid: {}", args.sub_sid);
 
     assert!(args.ayyuid > 0, "ayyuid should be non-zero for a live room");
-    assert!(
-        args.top_sid > 0,
-        "top_sid should be non-zero for a live room"
-    );
+    if detail.status {
+        // Stream info is only available when the room is live.
+        assert!(
+            args.top_sid > 0,
+            "top_sid should be non-zero for a live room"
+        );
+    }
 
     // Step 3: Connect to danmaku
     println!("\n>>> Step 3: 连接弹幕服务器...");

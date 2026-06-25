@@ -202,10 +202,10 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                 .with_metadata("face", serde_json::json!(face))
                 .with_metadata("start_time", serde_json::json!(start_time))
                 .with_metadata("end_time", serde_json::json!(end_time))
-                .with_metadata("background_color", serde_json::json!("#c1c1ff"))
+                .with_metadata("background_color", serde_json::json!("#ffffff"))
                 .with_metadata(
                     "background_bottom_color",
-                    serde_json::json!("#292a60"),
+                    serde_json::json!("#246488"),
                 );
 
             vec![DanmuItem::Message(danmu)]

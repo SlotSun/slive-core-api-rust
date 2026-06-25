@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::danmaku::message as danmu;
+
 // ---------------------------------------------------------------------------
 // Category types
 // ---------------------------------------------------------------------------
@@ -157,18 +159,77 @@ pub struct LivePlayUrl {
 /// A super-chat (paid highlighted message) in the room.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveSuperChatMessage {
-    pub id: String,
-    pub user_id: String,
     pub user_name: String,
-    pub content: String,
+    /// Avatar URL (may include size suffix like `@200w.jpg`).
+    #[serde(default)]
+    pub face: String,
+    pub message: String,
     /// Price in the platform's currency unit.
-    pub price: f64,
-    /// ISO-4217 currency code or platform-specific code.
-    pub currency: String,
-    /// How long the SC stays highlighted, in seconds.
-    pub keep_time: u32,
-    /// Unix timestamp (seconds) when the SC was sent.
+    pub price: i32,
+    /// Unix timestamp (milliseconds) when the SC was sent.
     pub start_time: i64,
-    /// Platform identifier.
-    pub platform: String,
+    /// Unix timestamp (milliseconds) when the SC expires.
+    pub end_time: i64,
+    /// SC background color (hex).
+    #[serde(default)]
+    pub background_color: String,
+    /// SC bottom background color (hex).
+    #[serde(default)]
+    pub background_bottom_color: String,
+}
+
+impl From<danmu::DanmuMessage> for LiveSuperChatMessage {
+    fn from(m: danmu::DanmuMessage) -> Self {
+        let meta = m.metadata.as_ref();
+        let price = meta
+            .and_then(|h| h.get("price"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as i32;
+        let keep_time = meta
+            .and_then(|h| h.get("keep_time"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        // Prefer explicit start_time/end_time from metadata (seconds),
+        // fall back to timestamp + keep_time calculation.
+        let start_time = meta
+            .and_then(|h| h.get("start_time"))
+            .and_then(|v| v.as_i64())
+            .filter(|&v| v > 0)
+            .map(|v| v * 1000)
+            .unwrap_or_else(|| m.timestamp.timestamp_millis());
+        let end_time = meta
+            .and_then(|h| h.get("end_time"))
+            .and_then(|v| v.as_i64())
+            .filter(|&v| v > 0)
+            .map(|v| v * 1000)
+            .unwrap_or(start_time + (keep_time as i64 * 1000));
+
+        let face = meta
+            .and_then(|h| h.get("face"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let background_color = meta
+            .and_then(|h| h.get("background_color"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let background_bottom_color = meta
+            .and_then(|h| h.get("background_bottom_color"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        Self {
+            user_name: m.username,
+            face,
+            message: m.content,
+            price,
+            start_time,
+            end_time,
+            background_color,
+            background_bottom_color,
+        }
+    }
 }

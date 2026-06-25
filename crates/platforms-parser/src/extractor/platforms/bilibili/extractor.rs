@@ -35,7 +35,7 @@ const ROOM_INFO_URL: &str =
 const ROOM_INIT_URL: &str = "https://api.live.bilibili.com/room/v1/Room/room_init?id={room_id}";
 const PLAY_INFO_URL: &str = "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id={room_id}&qn={qn}&platform=h5&protocol=0,1&format=0,1,2&codec=0,1&dolby=5&panorama=1";
 const SUPER_CHAT_URL: &str =
-    "https://api.live.bilibili.com/xlive/general-room/v1/giftMsg/getSuperChatMsg?room_id={room_id}";
+    "https://api.live.bilibili.com/av/v1/SuperChat/getMessageList?room_id={room_id}";
 
 const SEARCH_ROOMS_BASE: &str = "https://api.bilibili.com/x/web-interface/search/type";
 const SEARCH_ANCHORS_BASE: &str = "https://api.bilibili.com/x/web-interface/search/type";
@@ -974,7 +974,7 @@ impl LiveExtractor for BilibiliExtractor {
         let json = self.fetch_json(&url).await?;
 
         let messages = json
-            .pointer("/data/message_list")
+            .pointer("/data/list")
             .and_then(|v| v.as_array());
 
         let Some(messages) = messages else {
@@ -984,28 +984,31 @@ impl LiveExtractor for BilibiliExtractor {
         let result: Vec<LiveSuperChatMessage> = messages
             .iter()
             .filter_map(|msg| {
-                let id = msg.get("id").and_then(|v| v.as_i64())?.to_string();
-                let uid = msg
-                    .get("uid")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0)
-                    .to_string();
-                let uname = str_field(msg, "uname");
+                let uname = str_field(msg, "/user_info/uname");
+                let face = str_field(msg, "/user_info/face");
                 let message = str_field(msg, "message");
-                let price = msg.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let keep_time = msg.get("time").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let start_time = msg.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0);
+                let price = msg.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0) as i32;
+                let keep_time = msg.get("time").and_then(|v| v.as_i64()).unwrap_or(0);
+                let start_ts = msg.get("start_time").and_then(|v| v.as_i64()).unwrap_or(0) * 1000;
+                let end_ts = msg.get("end_time").and_then(|v| v.as_i64()).unwrap_or(0) * 1000;
+                let background_color = str_field(msg, "background_color");
+                let background_bottom_color = str_field(msg, "background_bottom_color");
+
+                let end_time = if end_ts > 0 {
+                    end_ts
+                } else {
+                    start_ts + keep_time * 1000
+                };
 
                 Some(LiveSuperChatMessage {
-                    id,
-                    user_id: uid,
                     user_name: uname,
-                    content: message,
+                    face,
+                    message,
                     price,
-                    currency: "CNY".to_string(),
-                    keep_time,
-                    start_time,
-                    platform: PLATFORM_ID.to_string(),
+                    start_time: start_ts,
+                    end_time,
+                    background_color,
+                    background_bottom_color,
                 })
             })
             .collect();

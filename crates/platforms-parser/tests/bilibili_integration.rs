@@ -284,3 +284,40 @@ async fn test_get_recommend_rooms() {
         Err(e) => println!("  ⚠️ 获取推荐房间失败: {}", e),
     }
 }
+
+#[tokio::test]
+async fn test_get_super_chat_messages() {
+    ensure_tls_provider();
+    let ext = BilibiliExtractor::new();
+    ext.set_cookies(common::bilibili_cookies());
+
+    let room_id = "7878";
+    println!("=== 测试 SuperChat 接口 (房间 {}) ===", room_id);
+
+    match ext.get_super_chat_messages(room_id).await {
+        Ok(messages) => {
+            println!("  SC 数量: {}", messages.len());
+            for (i, msg) in messages.iter().enumerate() {
+                println!(
+                    "  [{}] {} ￥{}: {}",
+                    i + 1,
+                    msg.user_name,
+                    msg.price,
+                    msg.message,
+                );
+                println!(
+                    "      face={} start_time={} end_time={} color={}/{}",
+                    msg.face,
+                    msg.start_time,
+                    msg.end_time,
+                    msg.background_color,
+                    msg.background_bottom_color,
+                );
+            }
+            if messages.is_empty() {
+                println!("  ⚠️ 没有历史 SC（可能房间没有 SC 或接口限制）");
+            }
+        }
+        Err(e) => println!("  ⚠️ 获取 SuperChat 失败: {}", e),
+    }
+}
