@@ -17,12 +17,12 @@ pub struct BilibiliDanmakuData {
     /// Authentication token for the danmaku WebSocket.
     pub token: String,
     /// Available WebSocket hosts.
-    pub host_list: Vec<BilibiliDanmuHost>,
+    pub host_list: Vec<BilibiliDanmakuHost>,
 }
 
 /// A danmaku WebSocket host entry returned by `getDanmuInfo`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BilibiliDanmuHost {
+pub struct BilibiliDanmakuHost {
     pub host: String,
     pub port: u16,
     pub wss_port: u16,

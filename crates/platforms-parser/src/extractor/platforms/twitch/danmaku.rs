@@ -21,9 +21,9 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::danmaku::error::{DanmakuError, Result};
-use crate::danmaku::event::{DanmuControlEvent, DanmuItem};
-use crate::danmaku::message::{DanmuMessage, DanmuType};
-use crate::danmaku::provider::{ConnectionConfig, DanmuConnection, DanmuProvider};
+use crate::danmaku::event::{DanmakuControlEvent, DanmakuItem};
+use crate::danmaku::message::{DanmakuMessage, DanmakuType};
+use crate::danmaku::provider::{ConnectionConfig, DanmakuConnection, DanmakuProvider};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -150,10 +150,10 @@ fn extract_username_from_source(source: &str) -> &str {
 // Connection state
 // ---------------------------------------------------------------------------
 
-/// Per-connection bookkeeping kept inside [`TwitchDanmuProvider`].
+/// Per-connection bookkeeping kept inside [`TwitchDanmakuProvider`].
 struct TwitchConnectionState {
     /// Receiver end of the decoded-message channel.
-    message_rx: Arc<Mutex<mpsc::Receiver<DanmuItem>>>,
+    message_rx: Arc<Mutex<mpsc::Receiver<DanmakuItem>>>,
     /// Sender used to signal the background task to shut down.
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Background task handles.
@@ -182,11 +182,11 @@ impl Drop for TwitchConnectionState {
 /// 1. Connects to the Twitch IRC WebSocket.
 /// 2. Sends CAP REQ, PASS, NICK, JOIN messages.
 /// 3. Sends periodic PING heartbeats.
-/// 4. Parses incoming IRC messages and forwards [`DanmuItem`]s through `message_tx`.
+/// 4. Parses incoming IRC messages and forwards [`DanmakuItem`]s through `message_tx`.
 async fn run_twitch_irc_task(
     room_id: String,
     channel: String,
-    message_tx: mpsc::Sender<DanmuItem>,
+    message_tx: mpsc::Sender<DanmakuItem>,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) {
     // --- Connect ----------------------------------------------------------
@@ -286,7 +286,7 @@ async fn run_twitch_irc_task(
                     Some(Ok(Message::Close(_))) => {
                         info!(room_id = %room_id, "IRC WebSocket closed by server");
                         let _ = message_tx
-                            .send(DanmuItem::Control(DanmuControlEvent::StreamClosed {
+                            .send(DanmakuItem::Control(DanmakuControlEvent::StreamClosed {
                                 message: Some("IRC WebSocket closed by server".to_string()),
                                 action: None,
                             }))
@@ -324,14 +324,14 @@ async fn run_twitch_irc_task(
     let _ = ws_sink.close().await;
 }
 
-/// Process a single IRC line and return zero or more [`DanmuItem`]s.
+/// Process a single IRC line and return zero or more [`DanmakuItem`]s.
 ///
 /// Also handles PING→PONG keepalive by sending PONG through `ws_sink`.
 async fn process_irc_line(
     line: &str,
     _channel: &str,
     ws_sink: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-) -> std::result::Result<Vec<DanmuItem>, String> {
+) -> std::result::Result<Vec<DanmakuItem>, String> {
     let (tags, source, command, irc_channel, trailing) = parse_irc_message(line);
 
     match command {
@@ -367,7 +367,7 @@ async fn process_irc_line(
         // ---- RECONNECT ----------------------------------------------------
         "RECONNECT" => {
             warn!("Twitch IRC server requested RECONNECT");
-            Ok(vec![DanmuItem::Control(DanmuControlEvent::Other {
+            Ok(vec![DanmakuItem::Control(DanmakuControlEvent::Other {
                 kind: "reconnect".to_string(),
                 message: Some("Server requested reconnect".to_string()),
                 metadata: None,
@@ -398,7 +398,7 @@ async fn process_irc_line(
             let target_user = trailing;
             if target_user.is_empty() {
                 // Entire chat was cleared
-                Ok(vec![DanmuItem::Control(DanmuControlEvent::Other {
+                Ok(vec![DanmakuItem::Control(DanmakuControlEvent::Other {
                     kind: "clearchat".to_string(),
                     message: Some("Chat was cleared by a moderator".to_string()),
                     metadata: None,
@@ -419,7 +419,7 @@ async fn process_irc_line(
                         .unwrap_or_default()
                 );
 
-                Ok(vec![DanmuItem::Control(DanmuControlEvent::Other {
+                Ok(vec![DanmakuItem::Control(DanmakuControlEvent::Other {
                     kind: "clearchat_user".to_string(),
                     message: Some(format!("{}: {}", target_user, ban_reason)),
                     metadata: {
@@ -482,14 +482,14 @@ async fn process_irc_line(
                         .cloned()
                         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-                    Ok(vec![DanmuItem::Message(DanmuMessage {
+                    Ok(vec![DanmakuItem::Message(DanmakuMessage {
                         id: msg_uuid,
                         user_id,
                         username: display_name,
                         content,
                         color: None,
                         timestamp: chrono::Utc::now(),
-                        message_type: DanmuType::Subscription,
+                        message_type: DanmakuType::Subscription,
                         metadata: Some(metadata),
                     })])
                 }
@@ -520,14 +520,14 @@ async fn process_irc_line(
                         .cloned()
                         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-                    Ok(vec![DanmuItem::Message(DanmuMessage {
+                    Ok(vec![DanmakuItem::Message(DanmakuMessage {
                         id: msg_uuid,
                         user_id,
                         username: display_name,
                         content,
                         color: None,
                         timestamp: chrono::Utc::now(),
-                        message_type: DanmuType::Gift,
+                        message_type: DanmakuType::Gift,
                         metadata: Some(metadata),
                     })])
                 }
@@ -559,14 +559,14 @@ async fn process_irc_line(
                         .cloned()
                         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-                    Ok(vec![DanmuItem::Message(DanmuMessage {
+                    Ok(vec![DanmakuItem::Message(DanmakuMessage {
                         id: msg_uuid,
                         user_id,
                         username: display_name,
                         content,
                         color: None,
                         timestamp: chrono::Utc::now(),
-                        message_type: DanmuType::Gift,
+                        message_type: DanmakuType::Gift,
                         metadata: Some(metadata),
                     })])
                 }
@@ -594,14 +594,14 @@ async fn process_irc_line(
                         .cloned()
                         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-                    Ok(vec![DanmuItem::Message(DanmuMessage {
+                    Ok(vec![DanmakuItem::Message(DanmakuMessage {
                         id: msg_uuid,
                         user_id: tags.get("user-id").cloned().unwrap_or_default(),
                         username: display_name,
                         content,
                         color: None,
                         timestamp: chrono::Utc::now(),
-                        message_type: DanmuType::System,
+                        message_type: DanmakuType::System,
                         metadata: Some(metadata),
                     })])
                 }
@@ -616,14 +616,14 @@ async fn process_irc_line(
                             .get("id")
                             .cloned()
                             .unwrap_or_else(|| Uuid::new_v4().to_string());
-                        Ok(vec![DanmuItem::Message(DanmuMessage {
+                        Ok(vec![DanmakuItem::Message(DanmakuMessage {
                             id: msg_uuid,
                             user_id: tags.get("user-id").cloned().unwrap_or_default(),
                             username: display_name.clone(),
                             content: format!("{} is new here!", display_name),
                             color: None,
                             timestamp: chrono::Utc::now(),
-                            message_type: DanmuType::UserJoin,
+                            message_type: DanmakuType::UserJoin,
                             metadata: Some({
                                 let mut m = HashMap::new();
                                 m.insert(
@@ -686,12 +686,12 @@ async fn process_irc_line(
             let (message_type, final_content) = if let Some(bits_count) = &bits {
                 metadata.insert("bits".to_string(), serde_json::json!(bits_count));
                 metadata.insert("event_type".to_string(), serde_json::json!("cheer"));
-                (DanmuType::SuperChat, content.clone())
+                (DanmakuType::SuperChat, content.clone())
             } else {
-                (DanmuType::Chat, content.clone())
+                (DanmakuType::Chat, content.clone())
             };
 
-            let danmu = DanmuMessage {
+            let danmu = DanmakuMessage {
                 id: msg_id,
                 user_id,
                 username: display_name,
@@ -706,7 +706,7 @@ async fn process_irc_line(
                 },
             };
 
-            Ok(vec![DanmuItem::Message(danmu)])
+            Ok(vec![DanmakuItem::Message(danmu)])
         }
 
         // ---- Unhandled commands -------------------------------------------
@@ -718,15 +718,15 @@ async fn process_irc_line(
 }
 
 // ---------------------------------------------------------------------------
-// TwitchDanmuProvider
+// TwitchDanmakuProvider
 // ---------------------------------------------------------------------------
 
 /// Platform-specific danmaku provider for Twitch.
-pub struct TwitchDanmuProvider {
+pub struct TwitchDanmakuProvider {
     connections: tokio::sync::RwLock<HashMap<String, Arc<Mutex<TwitchConnectionState>>>>,
 }
 
-impl TwitchDanmuProvider {
+impl TwitchDanmakuProvider {
     pub fn new() -> Self {
         Self {
             connections: tokio::sync::RwLock::new(HashMap::new()),
@@ -735,12 +735,12 @@ impl TwitchDanmuProvider {
 }
 
 /// Convenience factory used by the `ProviderRegistry`.
-pub fn create_twitch_danmu_provider() -> TwitchDanmuProvider {
-    TwitchDanmuProvider::new()
+pub fn create_twitch_danmu_provider() -> TwitchDanmakuProvider {
+    TwitchDanmakuProvider::new()
 }
 
 #[async_trait]
-impl DanmuProvider for TwitchDanmuProvider {
+impl DanmakuProvider for TwitchDanmakuProvider {
     fn platform(&self) -> &str {
         "twitch"
     }
@@ -774,7 +774,7 @@ impl DanmuProvider for TwitchDanmuProvider {
             })
     }
 
-    async fn connect(&self, room_id: &str, _config: ConnectionConfig) -> Result<DanmuConnection> {
+    async fn connect(&self, room_id: &str, _config: ConnectionConfig) -> Result<DanmakuConnection> {
         let channel = room_id.to_string();
 
         let connection_id = format!("twitch-{}-{}", room_id, Uuid::new_v4());
@@ -801,13 +801,13 @@ impl DanmuProvider for TwitchDanmuProvider {
             .await
             .insert(connection_id.clone(), Arc::new(Mutex::new(state)));
 
-        let mut conn = DanmuConnection::new(connection_id, "twitch", room_id);
+        let mut conn = DanmakuConnection::new(connection_id, "twitch", room_id);
         conn.set_connected();
 
         Ok(conn)
     }
 
-    async fn disconnect(&self, connection: &mut DanmuConnection) -> Result<()> {
+    async fn disconnect(&self, connection: &mut DanmakuConnection) -> Result<()> {
         if let Some(state_arc) = self.connections.write().await.remove(&connection.id) {
             let mut state = state_arc.lock().await;
             if let Some(tx) = state.shutdown_tx.take() {
@@ -819,7 +819,7 @@ impl DanmuProvider for TwitchDanmuProvider {
         Ok(())
     }
 
-    async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>> {
+    async fn receive(&self, connection: &DanmakuConnection) -> Result<Option<DanmakuItem>> {
         let state_arc = {
             let map = self.connections.read().await;
             map.get(&connection.id).cloned()
@@ -919,7 +919,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_standard_url() {
-        let provider = TwitchDanmuProvider::new();
+        let provider = TwitchDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("https://www.twitch.tv/shroud"),
             Some("shroud".to_string())
@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_no_www() {
-        let provider = TwitchDanmuProvider::new();
+        let provider = TwitchDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("https://twitch.tv/pokimanelol"),
             Some("pokimanelol".to_string())
@@ -937,7 +937,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_no_protocol() {
-        let provider = TwitchDanmuProvider::new();
+        let provider = TwitchDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("twitch.tv/xqc"),
             Some("xqc".to_string())
@@ -946,13 +946,13 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_invalid_url() {
-        let provider = TwitchDanmuProvider::new();
+        let provider = TwitchDanmakuProvider::new();
         assert_eq!(provider.extract_room_id("https://example.com"), None);
     }
 
     #[test]
     fn test_extract_room_id_reserved_path() {
-        let provider = TwitchDanmuProvider::new();
+        let provider = TwitchDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("https://www.twitch.tv/directory"),
             None
@@ -965,7 +965,7 @@ mod tests {
 
     #[test]
     fn test_supports_url() {
-        let provider = TwitchDanmuProvider::new();
+        let provider = TwitchDanmakuProvider::new();
         assert!(provider.supports_url("https://www.twitch.tv/shroud"));
         assert!(provider.supports_url("twitch.tv/xqc"));
         assert!(!provider.supports_url("https://www.youtube.com/watch?v=abc"));

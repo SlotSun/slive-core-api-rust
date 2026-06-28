@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 
 /// Statistics for a danmu collection session.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct DanmuStatistics {
+pub struct DanmakuStatistics {
     /// Total number of danmu messages received
     pub total_count: u64,
     /// Number of chat messages
@@ -493,7 +493,7 @@ impl StatisticsAggregator {
     }
 
     /// Finalize and return statistics.
-    pub fn finalize(mut self, end_time: DateTime<Utc>) -> DanmuStatistics {
+    pub fn finalize(mut self, end_time: DateTime<Utc>) -> DanmakuStatistics {
         // Flush current bucket
         if let Some((start, count)) = self.current_bucket.take() {
             self.rate_data.push_back(RateDataPoint {
@@ -510,7 +510,7 @@ impl StatisticsAggregator {
 
         let top_talkers = self.talker_hh.into_top_n(self.max_top_talkers);
         let word_frequency = self.word_hh.into_top_n(self.max_words);
-        DanmuStatistics {
+        DanmakuStatistics {
             total_count: self.total_count,
             chat_count: self.chat_count,
             gift_count: self.gift_count,
@@ -524,7 +524,7 @@ impl StatisticsAggregator {
     }
 
     /// Get current statistics without finalizing.
-    pub fn current_stats(&self) -> DanmuStatistics {
+    pub fn current_stats(&self) -> DanmakuStatistics {
         let top_talkers = self.talker_hh.top_n(self.max_top_talkers);
         let word_frequency = self.word_hh.top_n(self.max_words);
 
@@ -536,7 +536,7 @@ impl StatisticsAggregator {
             });
         }
 
-        DanmuStatistics {
+        DanmakuStatistics {
             total_count: self.total_count,
             chat_count: self.chat_count,
             gift_count: self.gift_count,
@@ -553,7 +553,7 @@ impl StatisticsAggregator {
     ///
     /// This is useful for long-running sessions to avoid unbounded memory growth
     /// from per-user/per-word tracking over time.
-    pub fn checkpoint(&mut self, end_time: DateTime<Utc>) -> DanmuStatistics {
+    pub fn checkpoint(&mut self, end_time: DateTime<Utc>) -> DanmakuStatistics {
         let prev = std::mem::replace(
             self,
             Self::with_config(

@@ -21,11 +21,11 @@ use tokio_tungstenite::tungstenite::http;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
-use crate::USER_AGENT;
+use crate::extractor::http_client::USER_AGENT;
 use crate::danmaku::error::{DanmakuError, Result};
-use crate::danmaku::event::{DanmuControlEvent, DanmuItem};
-use crate::danmaku::message::{DanmuMessage, DanmuType};
-use crate::danmaku::provider::{ConnectionConfig, DanmuConnection, DanmuProvider};
+use crate::danmaku::event::{DanmakuControlEvent, DanmakuItem};
+use crate::danmaku::message::{DanmakuMessage, DanmakuType};
+use crate::danmaku::provider::{ConnectionConfig, DanmakuConnection, DanmakuProvider};
 
 // ===========================================================================
 // WebSocket hosts
@@ -440,7 +440,7 @@ fn user_name(user: &DataUser) -> String {
 // ===========================================================================
 
 struct DecodedFrame {
-    items: Vec<DanmuItem>,
+    items: Vec<DanmakuItem>,
     ack_log_id: Option<u64>,
     internal_ext: Vec<u8>,
 }
@@ -491,7 +491,7 @@ fn decode_douyin_frame(data: &[u8]) -> std::result::Result<DecodedFrame, String>
     })
 }
 
-fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
+fn decode_im_message(msg: &ImMessage) -> Vec<DanmakuItem> {
     match msg.method.as_str() {
         "WebcastChatMessage" => {
             let Ok(chat) = ChatMessage::decode(Bytes::from(msg.payload.clone())) else {
@@ -512,8 +512,8 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
                 Uuid::new_v4().to_string()
             };
 
-            let danmu = DanmuMessage::chat(id, user_id(user), user_name(user), chat.content);
-            vec![DanmuItem::Message(danmu)]
+            let danmu = DanmakuMessage::chat(id, user_id(user), user_name(user), chat.content);
+            vec![DanmakuItem::Message(danmu)]
         }
 
         "WebcastGiftMessage" => {
@@ -558,7 +558,7 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
             };
 
             let danmu =
-                DanmuMessage::gift(id, user_id(user), user_name(user), &gift_name, gift_count);
+                DanmakuMessage::gift(id, user_id(user), user_name(user), &gift_name, gift_count);
             vec![]
         }
 
@@ -587,14 +587,14 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
                 format!("进入直播间 (在线 {})", member.member_count)
             };
 
-            let danmu = DanmuMessage {
+            let danmu = DanmakuMessage {
                 id,
                 user_id: user_id(user),
                 username: user_name(user),
                 content,
                 color: None,
                 timestamp: chrono::Utc::now(),
-                message_type: DanmuType::UserJoin,
+                message_type: DanmakuType::UserJoin,
                 metadata: None,
             };
             vec![]
@@ -625,14 +625,14 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
                 _ => "进行了社交互动",
             };
 
-            let danmu = DanmuMessage {
+            let danmu = DanmakuMessage {
                 id,
                 user_id: user_id(user),
                 username: user_name(user),
                 content: action_str.to_string(),
                 color: None,
                 timestamp: chrono::Utc::now(),
-                message_type: DanmuType::Follow,
+                message_type: DanmakuType::Follow,
                 metadata: None,
             };
             vec![]
@@ -647,7 +647,7 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
             if ctrl.action == 3 {
                 let tips = ctrl.tips.trim().to_string();
                 let tips = (!tips.is_empty()).then_some(tips);
-                vec![DanmuItem::Control(DanmuControlEvent::StreamClosed {
+                vec![DanmakuItem::Control(DanmakuControlEvent::StreamClosed {
                     message: tips,
                     action: Some(ctrl.action),
                 })]
@@ -670,7 +670,7 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
             };
 
             let id = Uuid::new_v4().to_string();
-            let danmu = DanmuMessage::chat(id, "0", "system", format!("在线: {}", display))
+            let danmu = DanmakuMessage::chat(id, "0", "system", format!("在线: {}", display))
                 .with_metadata("online_count", serde_json::json!(stats.total))
                 .with_metadata("event_type", serde_json::json!("online_count"));
 
@@ -689,7 +689,7 @@ fn decode_im_message(msg: &ImMessage) -> Vec<DanmuItem> {
 // ===========================================================================
 
 struct DouyinConnectionState {
-    message_rx: Arc<Mutex<mpsc::Receiver<DanmuItem>>>,
+    message_rx: Arc<Mutex<mpsc::Receiver<DanmakuItem>>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -716,7 +716,7 @@ async fn run_douyin_ws_task(
     room_id: String,
     user_unique_id: String,
     ttwid: String,
-    message_tx: mpsc::Sender<DanmuItem>,
+    message_tx: mpsc::Sender<DanmakuItem>,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) {
     let ws_url = build_ws_url(&room_id, &user_unique_id);
@@ -808,7 +808,7 @@ async fn run_douyin_ws_task(
                     Some(Ok(WsMessage::Close(_))) => {
                         info!(room_id = %room_id, "WebSocket closed by server");
                         let _ = message_tx
-                            .send(DanmuItem::Control(DanmuControlEvent::StreamClosed {
+                            .send(DanmakuItem::Control(DanmakuControlEvent::StreamClosed {
                                 message: Some("WebSocket closed by server".to_string()),
                                 action: None,
                             }))
@@ -839,14 +839,14 @@ async fn run_douyin_ws_task(
 }
 
 // ===========================================================================
-// DouyinDanmuProvider
+// DouyinDanmakuProvider
 // ===========================================================================
 
-pub struct DouyinDanmuProvider {
+pub struct DouyinDanmakuProvider {
     connections: tokio::sync::RwLock<HashMap<String, Arc<Mutex<DouyinConnectionState>>>>,
 }
 
-impl DouyinDanmuProvider {
+impl DouyinDanmakuProvider {
     pub fn new() -> Self {
         Self {
             connections: tokio::sync::RwLock::new(HashMap::new()),
@@ -854,12 +854,12 @@ impl DouyinDanmuProvider {
     }
 }
 
-pub fn create_douyin_danmu_provider() -> DouyinDanmuProvider {
-    DouyinDanmuProvider::new()
+pub fn create_douyin_danmu_provider() -> DouyinDanmakuProvider {
+    DouyinDanmakuProvider::new()
 }
 
 #[async_trait]
-impl DanmuProvider for DouyinDanmuProvider {
+impl DanmakuProvider for DouyinDanmakuProvider {
     fn platform(&self) -> &str {
         "douyin"
     }
@@ -874,7 +874,7 @@ impl DanmuProvider for DouyinDanmuProvider {
             .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
     }
 
-    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmuConnection> {
+    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmakuConnection> {
         let extras = config.extras.unwrap_or_default();
 
         // Numeric room_id from extras (set by extractor), fallback to web_rid.
@@ -913,12 +913,12 @@ impl DanmuProvider for DouyinDanmuProvider {
             .await
             .insert(connection_id.clone(), Arc::new(Mutex::new(state)));
 
-        let mut conn = DanmuConnection::new(connection_id, "douyin", room_id);
+        let mut conn = DanmakuConnection::new(connection_id, "douyin", room_id);
         conn.set_connected();
         Ok(conn)
     }
 
-    async fn disconnect(&self, connection: &mut DanmuConnection) -> Result<()> {
+    async fn disconnect(&self, connection: &mut DanmakuConnection) -> Result<()> {
         if let Some(state_arc) = self.connections.write().await.remove(&connection.id) {
             let mut state = state_arc.lock().await;
             if let Some(tx) = state.shutdown_tx.take() {
@@ -930,7 +930,7 @@ impl DanmuProvider for DouyinDanmuProvider {
         Ok(())
     }
 
-    async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>> {
+    async fn receive(&self, connection: &DanmakuConnection) -> Result<Option<DanmakuItem>> {
         let state_arc = {
             let map = self.connections.read().await;
             map.get(&connection.id).cloned()
@@ -968,7 +968,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id() {
-        let provider = DouyinDanmuProvider::new();
+        let provider = DouyinDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("https://live.douyin.com/12345678"),
             Some("12345678".to_string())
@@ -982,7 +982,7 @@ mod tests {
 
     #[test]
     fn test_supports_url() {
-        let provider = DouyinDanmuProvider::new();
+        let provider = DouyinDanmakuProvider::new();
         assert!(provider.supports_url("https://live.douyin.com/123"));
         assert!(!provider.supports_url("https://www.huya.com/123"));
     }

@@ -7,7 +7,7 @@ use rand::RngExt;
 use rand::seq::IndexedRandom;
 use std::collections::HashMap;
 
-use crate::USER_AGENT as DEFAULT_UA;
+use crate::extractor::http_client::USER_AGENT as DEFAULT_UA;
 
 pub struct StringProcessor;
 

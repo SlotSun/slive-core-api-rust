@@ -178,8 +178,8 @@ pub struct LiveSuperChatMessage {
     pub background_bottom_color: String,
 }
 
-impl From<danmu::DanmuMessage> for LiveSuperChatMessage {
-    fn from(m: danmu::DanmuMessage) -> Self {
+impl From<danmu::DanmakuMessage> for LiveSuperChatMessage {
+    fn from(m: danmu::DanmakuMessage) -> Self {
         let meta = m.metadata.as_ref();
         let price = meta
             .and_then(|h| h.get("price"))

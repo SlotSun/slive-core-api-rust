@@ -8,11 +8,11 @@ mod common;
 
 use std::time::Duration;
 
-use platforms_parser::danmaku::event::DanmuItem;
-use platforms_parser::danmaku::message::DanmuType;
-use platforms_parser::danmaku::provider::{ConnectionConfig, DanmuProvider};
-use platforms_parser::extractor::LiveExtractor;
+use platforms_parser::danmaku::event::DanmakuItem;
+use platforms_parser::danmaku::message::DanmakuType;
+use platforms_parser::danmaku::provider::{ConnectionConfig, DanmakuProvider};
 use platforms_parser::extractor::platforms::bilibili::BilibiliExtractor;
+use platforms_parser::extractor::LiveExtractor;
 use platforms_parser::extractor::platforms::bilibili::danmaku::create_bilibili_danmu_provider;
 
 /// Install the default rustls crypto provider once.
@@ -71,6 +71,7 @@ async fn test_bilibili_danmaku() {
         cookies: Some(cookies.to_string()),
         websocket: None,
         extras: None,
+        mask_config: None,
     };
 
     let mut connection = provider
@@ -95,23 +96,23 @@ async fn test_bilibili_danmaku() {
             Ok(Some(item)) => {
                 msg_count += 1;
                 match item {
-                    DanmuItem::Message(msg) => match msg.message_type {
-                        DanmuType::Chat => {
+                    DanmakuItem::Message(msg) => match msg.message_type {
+                        DanmakuType::Chat => {
                             chat_count += 1;
                             println!("  💬 [{}] {}", msg.username, msg.content);
                         }
-                        DanmuType::Gift => {
+                        DanmakuType::Gift => {
                             gift_count += 1;
                             println!("  🎁 [{}] {}", msg.username, msg.content);
                         }
-                        DanmuType::SuperChat => {
+                        DanmakuType::SuperChat => {
                             println!("  💰 [{}] {}", msg.username, msg.content);
                         }
                         _ => {
                             println!("  📢 [{}] {}", msg.username, msg.content);
                         }
                     },
-                    DanmuItem::Control(event) => {
+                    DanmakuItem::Control(event) => {
                         println!("  ⚙️ 控制事件: {:?}", event);
                     }
                 }

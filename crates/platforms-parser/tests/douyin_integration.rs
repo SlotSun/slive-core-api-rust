@@ -3,10 +3,10 @@
 
 mod common;
 
-use platforms_parser::danmaku::provider::{ConnectionConfig, DanmuProvider};
+use platforms_parser::danmaku::provider::{ConnectionConfig, DanmakuProvider};
 use platforms_parser::extractor::LiveExtractor;
 use platforms_parser::extractor::platforms::douyin::DouyinExtractor;
-use platforms_parser::extractor::platforms::douyin::danmaku::DouyinDanmuProvider;
+use platforms_parser::extractor::platforms::douyin::danmaku::DouyinDanmakuProvider;
 use platforms_parser::extractor::platforms::douyin::models::DouyinDanmakuData;
 
 fn ensure_tls_provider() {
@@ -213,7 +213,7 @@ async fn test_danmaku_connect() {
     println!("  web_rid: {}", dm.web_rid);
 
     // Connect to danmaku
-    let provider = DouyinDanmuProvider::new();
+    let provider = DouyinDanmakuProvider::new();
     let mut extras = std::collections::HashMap::new();
     extras.insert("room_id".to_string(), dm.room_id.clone());
     let config = ConnectionConfig::default().with_extras(extras);
@@ -232,13 +232,13 @@ async fn test_danmaku_connect() {
             Ok(Some(item)) => {
                 count += 1;
                 match &item {
-                    platforms_parser::danmaku::event::DanmuItem::Message(msg) => {
+                    platforms_parser::danmaku::event::DanmakuItem::Message(msg) => {
                         println!(
                             "  [{}] {}: {}",
                             msg.message_type as u8, msg.username, msg.content
                         );
                     }
-                    platforms_parser::danmaku::event::DanmuItem::Control(evt) => {
+                    platforms_parser::danmaku::event::DanmakuItem::Control(evt) => {
                         println!("  [控制] {:?}", evt);
                     }
                 }

@@ -9,18 +9,18 @@ pub mod websocket;
 pub mod writer;
 
 pub use error::{DanmakuError, Result};
-pub use event::{DanmuControlEvent, DanmuItem};
-pub use message::{DanmuMessage, DanmuType};
-pub use provider::{ConnectionConfig, DanmuConnection, DanmuProvider};
+pub use event::{DanmakuControlEvent, DanmakuItem};
+pub use message::{DanmakuMessage, DanmakuType};
+pub use provider::{ConnectionConfig, DanmakuConnection, DanmakuProvider};
 pub use registry::ProviderRegistry;
 pub use sampler::{
-    DanmuSampler, DanmuSamplingConfig, FixedIntervalSampler, VelocitySampler, create_sampler,
+    DanmakuSampler, DanmakuSamplingConfig, FixedIntervalSampler, VelocitySampler, create_sampler,
 };
 pub use statistics::{
-    DanmuStatistics, RateDataPoint, StatisticsAggregator, TopTalker, WordFrequency,
+    DanmakuStatistics, RateDataPoint, StatisticsAggregator, TopTalker, WordFrequency,
 };
-pub use websocket::{DanmuProtocol, WebSocketDanmuProvider};
-pub use writer::{XmlDanmuWriter, escape_xml, message_type_to_int};
+pub use websocket::{DanmakuProtocol, WebSocketDanmakuProvider};
+pub use writer::{XmlDanmakuWriter, escape_xml, message_type_to_int};
 
-pub use crate::extractor::platforms::huya::danmaku::HuyaDanmuProvider;
-pub use crate::extractor::platforms::twitch::danmaku::TwitchDanmuProvider;
+pub use crate::extractor::platforms::huya::danmaku::HuyaDanmakuProvider;
+pub use crate::extractor::platforms::twitch::danmaku::TwitchDanmakuProvider;

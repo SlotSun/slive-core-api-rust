@@ -9,7 +9,7 @@ use std::time::Duration;
 /// Configuration for danmu sampling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum DanmuSamplingConfig {
+pub enum DanmakuSamplingConfig {
     /// Fixed interval sampling
     Fixed {
         /// Interval in seconds between samples
@@ -26,13 +26,13 @@ pub enum DanmuSamplingConfig {
     },
 }
 
-impl Default for DanmuSamplingConfig {
+impl Default for DanmakuSamplingConfig {
     fn default() -> Self {
         Self::Fixed { interval_secs: 10 }
     }
 }
 
-impl DanmuSamplingConfig {
+impl DanmakuSamplingConfig {
     /// Create a fixed interval sampler config.
     pub fn fixed(interval_secs: u64) -> Self {
         Self::Fixed { interval_secs }
@@ -53,7 +53,7 @@ impl DanmuSamplingConfig {
 }
 
 /// Trait for danmu sampling strategies.
-pub trait DanmuSampler: Send + Sync {
+pub trait DanmakuSampler: Send + Sync {
     /// Record that a message was received.
     fn record_message(&mut self, timestamp: DateTime<Utc>);
 
@@ -89,7 +89,7 @@ impl FixedIntervalSampler {
     }
 }
 
-impl DanmuSampler for FixedIntervalSampler {
+impl DanmakuSampler for FixedIntervalSampler {
     fn record_message(&mut self, _timestamp: DateTime<Utc>) {
         // Fixed sampler doesn't adjust based on message rate
     }
@@ -203,7 +203,7 @@ impl VelocitySampler {
     }
 }
 
-impl DanmuSampler for VelocitySampler {
+impl DanmakuSampler for VelocitySampler {
     fn record_message(&mut self, timestamp: DateTime<Utc>) {
         self.messages_since_sample += 1;
 
@@ -257,12 +257,12 @@ impl DanmuSampler for VelocitySampler {
 }
 
 /// Create a sampler from configuration.
-pub fn create_sampler(config: &DanmuSamplingConfig) -> Box<dyn DanmuSampler> {
+pub fn create_sampler(config: &DanmakuSamplingConfig) -> Box<dyn DanmakuSampler> {
     match config {
-        DanmuSamplingConfig::Fixed { interval_secs } => {
+        DanmakuSamplingConfig::Fixed { interval_secs } => {
             Box::new(FixedIntervalSampler::new(*interval_secs))
         }
-        DanmuSamplingConfig::Velocity {
+        DanmakuSamplingConfig::Velocity {
             min_interval_secs,
             max_interval_secs,
             target_danmus_per_sample,
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_create_sampler_fixed() {
-        let config = DanmuSamplingConfig::fixed(15);
+        let config = DanmakuSamplingConfig::fixed(15);
         let sampler = create_sampler(&config);
 
         assert_eq!(sampler.current_interval(), Duration::from_secs(15));
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_create_sampler_velocity() {
-        let config = DanmuSamplingConfig::velocity(5, 30, 10);
+        let config = DanmakuSamplingConfig::velocity(5, 30, 10);
         let sampler = create_sampler(&config);
 
         // Initial interval should be midpoint

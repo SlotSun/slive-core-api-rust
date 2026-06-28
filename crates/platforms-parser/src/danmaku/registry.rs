@@ -1,6 +1,6 @@
 //! Registry of available danmu providers.
 
-use crate::danmaku::provider::DanmuProvider;
+use crate::danmaku::provider::DanmakuProvider;
 use crate::extractor::platforms::bilibili::danmaku::create_bilibili_danmu_provider;
 use crate::extractor::platforms::douyin::danmaku::create_douyin_danmu_provider;
 use crate::extractor::platforms::douyu::danmaku::create_douyu_danmu_provider;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 /// Registry of available danmu providers.
 #[derive(Default)]
 pub struct ProviderRegistry {
-    providers: Vec<Arc<dyn DanmuProvider>>,
+    providers: Vec<Arc<dyn DanmakuProvider>>,
 }
 
 impl ProviderRegistry {
@@ -34,12 +34,12 @@ impl ProviderRegistry {
     }
 
     /// Register a provider.
-    pub fn register(&mut self, provider: Arc<dyn DanmuProvider>) {
+    pub fn register(&mut self, provider: Arc<dyn DanmakuProvider>) {
         self.providers.push(provider);
     }
 
     /// Get a provider for the given platform.
-    pub fn get_by_platform(&self, platform: &str) -> Option<Arc<dyn DanmuProvider>> {
+    pub fn get_by_platform(&self, platform: &str) -> Option<Arc<dyn DanmakuProvider>> {
         self.providers
             .iter()
             .find(|p| p.platform().eq_ignore_ascii_case(platform))
@@ -47,7 +47,7 @@ impl ProviderRegistry {
     }
 
     /// Get a provider that supports the given URL.
-    pub fn get_by_url(&self, url: &str) -> Option<Arc<dyn DanmuProvider>> {
+    pub fn get_by_url(&self, url: &str) -> Option<Arc<dyn DanmakuProvider>> {
         self.providers.iter().find(|p| p.supports_url(url)).cloned()
     }
 

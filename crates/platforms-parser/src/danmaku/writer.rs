@@ -31,7 +31,7 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 use crate::danmaku::error::Result;
-use crate::danmaku::message::{DanmuMessage, DanmuType};
+use crate::danmaku::message::{DanmakuMessage, DanmakuType};
 
 /// Default font size for danmu display.
 const DEFAULT_FONT_SIZE: u32 = 25;
@@ -51,14 +51,14 @@ const DEFAULT_POOL: u8 = 0;
 /// # Example
 ///
 /// ```ignore
-/// use platforms_parser::danmaku::XmlDanmuWriter;
+/// use platforms_parser::danmaku::XmlDanmakuWriter;
 /// use std::path::PathBuf;
 ///
-/// let mut writer = XmlDanmuWriter::new(&PathBuf::from("output.xml")).await?;
+/// let mut writer = XmlDanmakuWriter::new(&PathBuf::from("output.xml")).await?;
 /// writer.write_message(&message).await?;
 /// writer.finalize().await?;
 /// ```
-pub struct XmlDanmuWriter {
+pub struct XmlDanmakuWriter {
     path: PathBuf,
     file: Option<File>,
     message_count: u64,
@@ -69,7 +69,7 @@ pub struct XmlDanmuWriter {
     header_comments: Vec<String>,
 }
 
-impl XmlDanmuWriter {
+impl XmlDanmakuWriter {
     /// Create a new XML writer at the specified path.
     ///
     /// This will create the file and write the XML header.
@@ -149,7 +149,7 @@ impl XmlDanmuWriter {
     /// - `uid_crc32`: CRC32 of user ID
     /// - `row_id`: Message sequence number
     /// - `user`: Username of the sender
-    pub async fn write_message(&mut self, message: &DanmuMessage) -> Result<()> {
+    pub async fn write_message(&mut self, message: &DanmakuMessage) -> Result<()> {
         if let Some(file) = &mut self.file {
             // Calculate offset from segment start in seconds (3 decimal places)
             let offset_ms = (message.timestamp - self.segment_start_time)
@@ -167,8 +167,8 @@ impl XmlDanmuWriter {
             let row_id = self.message_count + 1;
 
             let xml = match message.message_type {
-                DanmuType::Gift => gift_to_xml(message, offset_secs, unix_timestamp_ms),
-                DanmuType::SuperChat => super_chat_to_xml(message, offset_secs, unix_timestamp_ms),
+                DanmakuType::Gift => gift_to_xml(message, offset_secs, unix_timestamp_ms),
+                DanmakuType::SuperChat => super_chat_to_xml(message, offset_secs, unix_timestamp_ms),
                 _ => {
                     // Get danmu type for Bilibili format
                     let danmu_type = message_type_to_bilibili_type(&message.message_type);
@@ -224,34 +224,34 @@ impl XmlDanmuWriter {
 /// - 6: Reverse scroll (left to right)
 /// - 7: Special
 /// - 8: Advanced
-pub fn message_type_to_bilibili_type(msg_type: &DanmuType) -> u8 {
+pub fn message_type_to_bilibili_type(msg_type: &DanmakuType) -> u8 {
     match msg_type {
-        DanmuType::Chat => 1,         // Regular chat = scroll
-        DanmuType::Gift => 1,         // Gift = scroll
-        DanmuType::SuperChat => 5,    // SuperChat = top fixed (prominent)
-        DanmuType::System => 4,       // System = bottom fixed
-        DanmuType::UserJoin => 1,     // User join = scroll
-        DanmuType::Follow => 1,       // Follow = scroll
-        DanmuType::Subscription => 5, // Subscription = top fixed
-        DanmuType::Other => 1,        // Other = scroll
+        DanmakuType::Chat => 1,         // Regular chat = scroll
+        DanmakuType::Gift => 1,         // Gift = scroll
+        DanmakuType::SuperChat => 5,    // SuperChat = top fixed (prominent)
+        DanmakuType::System => 4,       // System = bottom fixed
+        DanmakuType::UserJoin => 1,     // User join = scroll
+        DanmakuType::Follow => 1,       // Follow = scroll
+        DanmakuType::Subscription => 5, // Subscription = top fixed
+        DanmakuType::Other => 1,        // Other = scroll
     }
 }
 
 /// Convert a message type to its integer representation (legacy format).
-pub fn message_type_to_int(msg_type: &DanmuType) -> u8 {
+pub fn message_type_to_int(msg_type: &DanmakuType) -> u8 {
     match msg_type {
-        DanmuType::Chat => 1,
-        DanmuType::Gift => 2,
-        DanmuType::SuperChat => 3,
-        DanmuType::System => 4,
-        DanmuType::UserJoin => 5,
-        DanmuType::Follow => 6,
-        DanmuType::Subscription => 7,
-        DanmuType::Other => 0,
+        DanmakuType::Chat => 1,
+        DanmakuType::Gift => 2,
+        DanmakuType::SuperChat => 3,
+        DanmakuType::System => 4,
+        DanmakuType::UserJoin => 5,
+        DanmakuType::Follow => 6,
+        DanmakuType::Subscription => 7,
+        DanmakuType::Other => 0,
     }
 }
 
-fn message_color_to_bilibili_color(message: &DanmuMessage) -> Option<u32> {
+fn message_color_to_bilibili_color(message: &DanmakuMessage) -> Option<u32> {
     let raw = message.color.as_deref()?.trim();
     if raw.is_empty() {
         return None;
@@ -265,9 +265,9 @@ fn message_color_to_bilibili_color(message: &DanmuMessage) -> Option<u32> {
     u32::from_str_radix(hex, 16).ok()
 }
 
-fn message_content_for_xml(message: &DanmuMessage) -> String {
+fn message_content_for_xml(message: &DanmakuMessage) -> String {
     match message.message_type {
-        DanmuType::SuperChat => {
+        DanmakuType::SuperChat => {
             let content = message.content.trim();
             let content = content.to_string();
 
@@ -286,7 +286,7 @@ fn message_content_for_xml(message: &DanmuMessage) -> String {
                 content
             }
         }
-        DanmuType::Gift => {
+        DanmakuType::Gift => {
             let content = message.content.trim();
             if !content.is_empty() {
                 return content.to_string();
@@ -315,7 +315,7 @@ fn message_content_for_xml(message: &DanmuMessage) -> String {
     }
 }
 
-fn gift_to_xml(message: &DanmuMessage, ts: f64, timestamp_ms: i64) -> String {
+fn gift_to_xml(message: &DanmakuMessage, ts: f64, timestamp_ms: i64) -> String {
     let mut gift_name = "";
     let mut gift_count: u64 = 0;
     let mut price: u64 = 0;
@@ -344,7 +344,7 @@ fn gift_to_xml(message: &DanmuMessage, ts: f64, timestamp_ms: i64) -> String {
     )
 }
 
-fn super_chat_to_xml(message: &DanmuMessage, ts: f64, timestamp_ms: i64) -> String {
+fn super_chat_to_xml(message: &DanmakuMessage, ts: f64, timestamp_ms: i64) -> String {
     let mut price: u64 = 0;
     let mut keep_time: u64 = 0;
 
@@ -437,22 +437,22 @@ mod tests {
 
     #[test]
     fn test_message_type_to_bilibili_type() {
-        assert_eq!(message_type_to_bilibili_type(&DanmuType::Chat), 1);
-        assert_eq!(message_type_to_bilibili_type(&DanmuType::Gift), 1);
-        assert_eq!(message_type_to_bilibili_type(&DanmuType::SuperChat), 5);
-        assert_eq!(message_type_to_bilibili_type(&DanmuType::System), 4);
+        assert_eq!(message_type_to_bilibili_type(&DanmakuType::Chat), 1);
+        assert_eq!(message_type_to_bilibili_type(&DanmakuType::Gift), 1);
+        assert_eq!(message_type_to_bilibili_type(&DanmakuType::SuperChat), 5);
+        assert_eq!(message_type_to_bilibili_type(&DanmakuType::System), 4);
     }
 
     #[test]
     fn test_message_type_to_int() {
-        assert_eq!(message_type_to_int(&DanmuType::Chat), 1);
-        assert_eq!(message_type_to_int(&DanmuType::Gift), 2);
-        assert_eq!(message_type_to_int(&DanmuType::SuperChat), 3);
-        assert_eq!(message_type_to_int(&DanmuType::System), 4);
-        assert_eq!(message_type_to_int(&DanmuType::UserJoin), 5);
-        assert_eq!(message_type_to_int(&DanmuType::Follow), 6);
-        assert_eq!(message_type_to_int(&DanmuType::Subscription), 7);
-        assert_eq!(message_type_to_int(&DanmuType::Other), 0);
+        assert_eq!(message_type_to_int(&DanmakuType::Chat), 1);
+        assert_eq!(message_type_to_int(&DanmakuType::Gift), 2);
+        assert_eq!(message_type_to_int(&DanmakuType::SuperChat), 3);
+        assert_eq!(message_type_to_int(&DanmakuType::System), 4);
+        assert_eq!(message_type_to_int(&DanmakuType::UserJoin), 5);
+        assert_eq!(message_type_to_int(&DanmakuType::Follow), 6);
+        assert_eq!(message_type_to_int(&DanmakuType::Subscription), 7);
+        assert_eq!(message_type_to_int(&DanmakuType::Other), 0);
     }
 
     #[test]
@@ -470,16 +470,16 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("rust-srec-xml-writer-{}.xml", uuid::Uuid::new_v4()));
         let start = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
-        let mut writer = XmlDanmuWriter::with_start_time(&tmp, start)
+        let mut writer = XmlDanmakuWriter::with_start_time(&tmp, start)
             .await
             .expect("writer");
 
-        let gift = DanmuMessage::gift("g1", "u1", "GiftUser", "Rocket", 5)
+        let gift = DanmakuMessage::gift("g1", "u1", "GiftUser", "Rocket", 5)
             .with_timestamp(start + chrono::Duration::milliseconds(1500))
             .with_color("#FF0000");
         writer.write_message(&gift).await.expect("gift write");
 
-        let super_chat = DanmuMessage::super_chat("s1", "u2", "SCUser", "Hello", 30)
+        let super_chat = DanmakuMessage::super_chat("s1", "u2", "SCUser", "Hello", 30)
             .with_timestamp(start + chrono::Duration::milliseconds(2500));
         writer.write_message(&super_chat).await.expect("sc write");
 

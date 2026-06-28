@@ -23,8 +23,8 @@ use url::Url;
 
 use crate::danmaku::ConnectionConfig;
 use crate::danmaku::error::{DanmakuError, Result};
-use crate::danmaku::event::DanmuItem;
-use crate::danmaku::provider::{DanmuConnection, DanmuProvider};
+use crate::danmaku::event::DanmakuItem;
+use crate::danmaku::provider::{DanmakuConnection, DanmakuProvider};
 
 const MAX_ACTIVE_CONNECTIONS: usize = 1024;
 
@@ -200,7 +200,7 @@ fn merge_cookie_headers(base: Option<&str>, extra: Option<&str>) -> Option<Strin
 }
 
 /// Protocol definitions for a specific platform.
-pub trait DanmuProtocol: Send + Sync + 'static {
+pub trait DanmakuProtocol: Send + Sync + 'static {
     /// Platform name (e.g., "huya", "bilibili")
     fn platform(&self) -> &str;
 
@@ -278,7 +278,7 @@ pub trait DanmuProtocol: Send + Sync + 'static {
         message: &Message,
         room_id: &str,
         tx: &mpsc::Sender<Message>,
-    ) -> impl Future<Output = Result<Vec<DanmuItem>>> + Send;
+    ) -> impl Future<Output = Result<Vec<DanmakuItem>>> + Send;
 }
 
 /// Internal state for a WebSocket connection
@@ -296,7 +296,7 @@ struct WsConnectionState {
     #[allow(dead_code)]
     reconnect_count: Arc<AtomicU32>,
     /// Message receiver
-    message_rx: Arc<Mutex<mpsc::Receiver<DanmuItem>>>,
+    message_rx: Arc<Mutex<mpsc::Receiver<DanmakuItem>>>,
     /// Task handles
     tasks: Vec<JoinHandle<()>>,
     /// Shutdown sender
@@ -321,7 +321,7 @@ impl Drop for WsConnectionState {
 }
 
 /// A generic WebSocket-based Danmu Provider.
-pub struct WebSocketDanmuProvider<P> {
+pub struct WebSocketDanmakuProvider<P> {
     /// Protocol implementation
     protocol: P,
     /// Settings
@@ -348,7 +348,7 @@ impl Default for WebSocketProviderConfig {
     }
 }
 
-impl<P: DanmuProtocol + Clone> WebSocketDanmuProvider<P> {
+impl<P: DanmakuProtocol + Clone> WebSocketDanmakuProvider<P> {
     pub fn with_protocol(protocol: P, config: Option<WebSocketProviderConfig>) -> Self {
         Self {
             protocol,
@@ -365,7 +365,7 @@ impl<P: DanmuProtocol + Clone> WebSocketDanmuProvider<P> {
     ) -> Result<(
         Arc<AtomicBool>,
         Arc<AtomicU32>,
-        Arc<Mutex<mpsc::Receiver<DanmuItem>>>,
+        Arc<Mutex<mpsc::Receiver<DanmakuItem>>>,
         mpsc::Sender<()>,
         Vec<JoinHandle<()>>,
     )> {
@@ -642,12 +642,12 @@ impl<P: DanmuProtocol + Clone> WebSocketDanmuProvider<P> {
 }
 
 #[async_trait]
-impl<P: DanmuProtocol + Clone> DanmuProvider for WebSocketDanmuProvider<P> {
+impl<P: DanmakuProtocol + Clone> DanmakuProvider for WebSocketDanmakuProvider<P> {
     fn platform(&self) -> &str {
         self.protocol.platform()
     }
 
-    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmuConnection> {
+    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmakuConnection> {
         let connection_permit = self
             .connection_semaphore
             .clone()
@@ -680,7 +680,7 @@ impl<P: DanmuProtocol + Clone> DanmuProvider for WebSocketDanmuProvider<P> {
             .await
             .insert(connection_id.clone(), Arc::new(Mutex::new(state)));
 
-        let mut conn = DanmuConnection::new(connection_id, self.platform(), room_id);
+        let mut conn = DanmakuConnection::new(connection_id, self.platform(), room_id);
         // It might take a moment to actually connect, but we return the handle immediately.
         // The service will check `receive` which handles the logic.
         conn.set_connected();
@@ -688,7 +688,7 @@ impl<P: DanmuProtocol + Clone> DanmuProvider for WebSocketDanmuProvider<P> {
         Ok(conn)
     }
 
-    async fn disconnect(&self, connection: &mut DanmuConnection) -> Result<()> {
+    async fn disconnect(&self, connection: &mut DanmakuConnection) -> Result<()> {
         if let Some(state_arc) = self.connections.write().await.remove(&connection.id) {
             let mut state = state_arc.lock().await;
             if let Some(tx) = state.shutdown_tx.take() {
@@ -700,7 +700,7 @@ impl<P: DanmuProtocol + Clone> DanmuProvider for WebSocketDanmuProvider<P> {
         Ok(())
     }
 
-    async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>> {
+    async fn receive(&self, connection: &DanmakuConnection) -> Result<Option<DanmakuItem>> {
         let state_arc = {
             let map = self.connections.read().await;
             map.get(&connection.id).cloned()

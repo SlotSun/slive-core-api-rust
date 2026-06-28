@@ -1,7 +1,7 @@
 //! Typed events emitted by danmu providers.
 //!
-//! Danmu providers yield either regular chat messages (DanmuMessage) or control events
-//! (DanmuControlEvent). Control events should not be treated as chat messages and are
+//! Danmu providers yield either regular chat messages (DanmakuMessage) or control events
+//! (DanmakuControlEvent). Control events should not be treated as chat messages and are
 //! not suitable for writing into danmu XML by default.
 
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 /// Control events produced by the danmu stream that affect session semantics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum DanmuControlEvent {
+pub enum DanmakuControlEvent {
     /// The live stream ended / was closed by the platform.
     StreamClosed {
         /// Optional human-readable reason/tips provided by the platform.
@@ -38,7 +38,7 @@ pub enum DanmuControlEvent {
 /// A single item in the danmu stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DanmuItem {
-    Message(super::message::DanmuMessage),
-    Control(DanmuControlEvent),
+pub enum DanmakuItem {
+    Message(super::message::DanmakuMessage),
+    Control(DanmakuControlEvent),
 }

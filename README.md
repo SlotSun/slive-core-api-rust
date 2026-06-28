@@ -25,35 +25,43 @@ slive-core-api-rust/
 ```
 
 ```
-┌─────────────────────────────────────────────────┐
-│              platforms-parser                    │
-│                                                 │
-│  ┌──────────────┐       ┌──────────────────┐    │
-│  │   extractor   │       │     danmaku       │    │
-│  │               │       │                   │    │
-│  │ LiveExtractor │       │  DanmuProvider    │    │
-│  │   (trait)     │       │  DanmuProtocol    │    │
-│  │               │       │  (trait)          │    │
-│  │ ExtractorReg  │       │  ProviderRegistry │    │
-│  └───────┬───────┘       └────────┬──────────┘    │
-│          │                        │               │
-│  ┌───────┴────────────────────────┴──────┐       │
-│  │  Bilibili · Douyin · Douyu · Huya · Twitch │  │
-│  └───────────────────────────────────────┘       │
-│                                                 │
-│  ┌──────────────────┐  ┌──────────────────┐     │
-│  │   HttpClient      │  │  statistics      │     │
-│  │  (cookie+retry)   │  │  sampler         │     │
-│  │                   │  │  writer          │     │
-│  └──────────────────┘  └──────────────────┘     │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    platforms-parser                          │
+│                                                             │
+│  ┌──────────────┐       ┌──────────────────────┐           │
+│  │   extractor   │       │       danmaku         │           │
+│  │               │       │                       │           │
+│  │ LiveExtractor │       │   DanmakuProvider     │           │
+│  │   (trait)     │       │   DanmakuProtocol     │           │
+│  │               │       │   (trait)             │           │
+│  │ ExtractorReg  │       │   ProviderRegistry    │           │
+│  └───────┬───────┘       └──────────┬────────────┘           │
+│          │                          │                        │
+│  ┌───────┴──────────────────────────┴──────┐                │
+│  │  Bilibili · Douyin · Douyu · Huya · Twitch │             │
+│  └─────────────────────────────────────────┘                │
+│                                                             │
+│  ┌──────────────────┐  ┌──────────────────┐                 │
+│  │   HttpClient      │  │   danmaku_mask    │                 │
+│  │  (cookie+retry)   │  │                   │                 │
+│  │                   │  │  DanmakuMask      │                 │
+│  │                   │  │  FrequencyMask    │                 │
+│  │                   │  │  WordBlacklist    │                 │
+│  │                   │  │  (regex support)  │                 │
+│  └──────────────────┘  └──────────────────┘                 │
+│                                                             │
+│  ┌──────────────────────────────────────────┐               │
+│  │  statistics · sampler · writer            │               │
+│  └──────────────────────────────────────────┘               │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Components
 
 - **HttpClient** — Shared HTTP client with timeout, retry, and cookie management
 - **LiveExtractor** — Trait for stream URL extraction (room info, play URLs, quality selection)
-- **DanmuProvider** — Trait for real-time chat WebSocket connections
+- **DanmakuProvider** — Trait for real-time chat WebSocket connections
+- **DanmakuMask** — Trait for danmaku filtering (frequency, blacklist, regex)
 - **Platform-specific signing** — ABogus (Douyin), WBI (Bilibili), MD5 (Douyu)
 
 ## Usage
@@ -87,25 +95,25 @@ async fn main() {
 
 ```rust
 use platforms_parser::danmaku::{
-    create_bilibili_danmu_provider, ConnectionConfig,
-    DanmuItem, DanmuType,
+    create_bilibili_danmaku_provider, ConnectionConfig,
+    DanmakuItem, DanmakuType,
 };
 
 #[tokio::main]
 async fn main() {
-    let provider = create_bilibili_danmu_provider();
+    let provider = create_bilibili_danmaku_provider();
     let config = ConnectionConfig::with_cookies(Some("SESSDATA=...".into()));
     let mut conn = provider.connect("12345", config).await.unwrap();
 
     while let Some(item) = provider.receive(&conn).await.unwrap() {
         match item {
-            DanmuItem::Message(msg) => match msg.message_type {
-                DanmuType::Chat => println!("{}: {}", msg.username, msg.content),
-                DanmuType::Gift => println!("{} sent a gift", msg.username),
-                DanmuType::SuperChat => println!("SC: {}", msg.content),
+            DanmakuItem::Message(msg) => match msg.message_type {
+                DanmakuType::Chat => println!("{}: {}", msg.username, msg.content),
+                DanmakuType::Gift => println!("{} sent a gift", msg.username),
+                DanmakuType::SuperChat => println!("SC: {}", msg.content),
                 _ => {}
             },
-            DanmuItem::Control(event) => { /* stream closed, room info changed, etc. */ }
+            DanmakuItem::Control(event) => { /* stream closed, room info changed, etc. */ }
         }
     }
 
@@ -113,10 +121,51 @@ async fn main() {
 }
 ```
 
+### Danmaku Mask (Filtering)
+
+```rust
+use platforms_parser::danmaku_mask::mask_config::{MaskConfig, FrequencyConfig};
+use platforms_parser::danmaku_mask::mask_provider::MaskedDanmakuProvider;
+
+// Create masked provider
+let inner = create_huya_danmaku_provider();
+let provider = MaskedDanmakuProvider::new(inner);
+
+// Configure mask
+let mask_config = MaskConfig {
+    frequency: Some(FrequencyConfig {
+        base_window_ms: 10000,  // 10 seconds window
+        bucket_count: 5,
+        use_normalization: true,
+        max_frequency: 3,       // Max 3 times per window
+    }),
+    blacklist_words: Some(vec![
+        "广告".to_string(),           // Plain text
+        "代练".to_string(),           // Plain text
+        "/加[微V]信/".to_string(),    // Regex: matches "加微信" or "加V信"
+        "/(?i)spam/".to_string(),     // Regex: case-insensitive
+    ]),
+};
+
+let config = ConnectionConfig::with_cookies(None)
+    .with_mask(mask_config);
+
+let conn = provider.connect("room_id", config).await?;
+
+// Messages are automatically filtered
+while let Some(item) = provider.receive(&conn).await? {
+    // Only non-blocked messages reach here
+}
+
+// Runtime control
+let stats = provider.stats(&conn.id).await;
+println!("Passed: {}, Blocked: {}", stats.passed, stats.blocked);
+```
+
 ### Statistics & Sampling
 
 ```rust
-use platforms_parser::danmaku::{StatisticsAggregator, create_sampler, DanmuSamplingConfig};
+use platforms_parser::danmaku::{StatisticsAggregator, create_sampler, DanmakuSamplingConfig};
 
 let mut stats = StatisticsAggregator::new();
 // In your message loop:
@@ -130,9 +179,9 @@ println!("Word frequency: {:?}", result.word_frequency);
 ### XML Writer (Bilibili-compatible)
 
 ```rust
-use platforms_parser::danmaku::XmlDanmuWriter;
+use platforms_parser::danmaku::XmlDanmakuWriter;
 
-let mut writer = XmlDanmuWriter::new(std::path::Path::new("output.xml")).await.unwrap();
+let mut writer = XmlDanmakuWriter::new(std::path::Path::new("output.xml")).await.unwrap();
 writer.write_message(&msg).await.unwrap();
 writer.finalize().await.unwrap();
 ```
@@ -174,29 +223,29 @@ pub trait LiveExtractor: Send + Sync {
 }
 ```
 
-### 2. DanmuProvider Trait
+### 2. DanmakuProvider Trait
 
 Core trait for real-time danmaku WebSocket connections.
 
 ```rust
 #[async_trait]
-pub trait DanmuProvider: Send + Sync {
+pub trait DanmakuProvider: Send + Sync {
     fn platform(&self) -> &str;
     fn supports_url(&self, url: &str) -> bool;
     fn extract_room_id(&self, url: &str) -> Option<String>;
 
-    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmuConnection>;
-    async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>>;
-    async fn disconnect(&self, connection: &mut DanmuConnection) -> Result<()>;
+    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmakuConnection>;
+    async fn receive(&self, connection: &DanmakuConnection) -> Result<Option<DanmakuItem>>;
+    async fn disconnect(&self, connection: &mut DanmakuConnection) -> Result<()>;
 }
 ```
 
-### 3. DanmuProtocol Trait
+### 3. DanmakuProtocol Trait
 
 Lower-level trait for implementing custom WebSocket-based danmaku providers.
 
 ```rust
-pub trait DanmuProtocol: Send + Sync + 'static {
+pub trait DanmakuProtocol: Send + Sync + 'static {
     fn platform(&self) -> &str;
     fn supports_url(&self, url: &str) -> bool;
     fn extract_room_id(&self, url: &str) -> Option<String>;
@@ -211,9 +260,28 @@ pub trait DanmuProtocol: Send + Sync + 'static {
     fn handshake_messages(&self, room_id: &str) -> impl Future<Output = Result<Vec<Message>>> + Send;
     fn heartbeat_message(&self) -> Option<Message>;
     fn heartbeat_interval(&self) -> Duration;
-    fn decode_message(&self, message: &Message, room_id: &str, tx: &mpsc::Sender<Message>) -> impl Future<Output = Result<Vec<DanmuItem>>> + Send;
+    fn decode_message(&self, message: &Message, room_id: &str, tx: &mpsc::Sender<Message>) -> impl Future<Output = Result<Vec<DanmakuItem>>> + Send;
 }
 ```
+
+### 4. DanmakuMask Trait
+
+Trait for danmaku filtering strategies.
+
+```rust
+pub trait DanmakuMask: Send {
+    fn should_block(&mut self, text: &str, now_ms: u64) -> bool;
+    fn reset(&mut self);
+}
+```
+
+**Built-in implementations:**
+
+| Mask | Description |
+|------|-------------|
+| `FrequencyMask` | Sliding-window frequency limiter |
+| `WordBlacklist` | Keyword blacklist with regex support |
+| `CompositeMask` | Combines multiple masks (any blocks → blocked) |
 
 ---
 
@@ -230,7 +298,7 @@ pub trait DanmuProtocol: Send + Sync + 'static {
 | `LiveSubCategory` | Sub-category | `id`, `name`, `parent_id` |
 | `LivePlayQuality` | Quality level | `quality` (name), `data` (qn value) |
 | `LivePlayUrl` | Play stream URLs | `urls` (list), `url_type` (Flv/M3u8) |
-| `LiveSuperChatMessage` | Super chat message | `id`, `user_name`, `content`, `price`, `currency` |
+| `LiveSuperChatMessage` | Super chat message | `user_name`, `message`, `price`, `start_time`, `end_time` |
 | `LiveCategoryResult` | Paginated room list | `has_more`, `items` |
 | `LiveSearchRoomResult` | Search room results | `has_more`, `items` |
 | `LiveSearchAnchorResult` | Search anchor results | `has_more`, `items` |
@@ -239,16 +307,27 @@ pub trait DanmuProtocol: Send + Sync + 'static {
 
 | Struct/Enum | Description | Key Fields |
 |-------------|-------------|------------|
-| `DanmuMessage` | A single chat message | `id`, `user_id`, `username`, `content`, `message_type`, `timestamp`, `metadata` |
-| `DanmuType` | Message type enum | `Chat`, `Gift`, `SuperChat`, `System`, `UserJoin`, `Follow`, `Subscription`, `Other` |
-| `DanmuItem` | Top-level danmaku event | `Message(DanmuMessage)` or `Control(DanmuControlEvent)` |
-| `DanmuControlEvent` | Control events | `StreamClosed`, `RoomInfoChanged`, `Other` |
-| `DanmuConnection` | Connection state | `id`, `platform`, `room_id`, `is_connected`, `connected_at`, `reconnect_count` |
-| `ConnectionConfig` | Connection config | `cookies`, `websocket` (WebSocketProviderConfig), `extras` |
-| `DanmuStatistics` | Aggregated stats | `total_count`, `top_talkers`, `word_frequency`, `rate_timeseries` |
+| `DanmakuMessage` | A single chat message | `id`, `user_id`, `username`, `content`, `message_type`, `timestamp`, `metadata` |
+| `DanmakuType` | Message type enum | `Chat`, `Gift`, `SuperChat`, `System`, `UserJoin`, `Follow`, `Subscription`, `Other` |
+| `DanmakuItem` | Top-level danmaku event | `Message(DanmakuMessage)` or `Control(DanmakuControlEvent)` |
+| `DanmakuControlEvent` | Control events | `StreamClosed`, `RoomInfoChanged`, `Other` |
+| `DanmakuConnection` | Connection state | `id`, `platform`, `room_id`, `is_connected`, `connected_at`, `reconnect_count` |
+| `ConnectionConfig` | Connection config | `cookies`, `websocket`, `extras`, `mask_config` |
+| `DanmakuStatistics` | Aggregated stats | `total_count`, `top_talkers`, `word_frequency`, `rate_timeseries` |
 | `TopTalker` | Top message sender | `user_id`, `username`, `message_count` |
 | `WordFrequency` | Word count entry | `word`, `count` |
 | `RateDataPoint` | Rate timeseries point | `timestamp`, `count` |
+
+### Danmaku Mask Models
+
+| Struct/Enum | Description | Key Fields |
+|-------------|-------------|------------|
+| `MaskConfig` | Mask configuration | `frequency`, `blacklist_words` |
+| `FrequencyConfig` | Frequency mask config | `base_window_ms`, `bucket_count`, `use_normalization`, `max_frequency` |
+| `MaskStats` | Filter statistics | `total_received`, `passed`, `blocked` |
+| `FrequencyMask` | Sliding-window frequency limiter | - |
+| `WordBlacklist` | Keyword blacklist (with regex) | - |
+| `CompositeMask` | Combined masks | - |
 
 ### Enums
 
@@ -277,8 +356,8 @@ registry.register(my_extractor);    // register custom extractor
 
 ```rust
 let registry = ProviderRegistry::with_defaults(); // registers all 5 platforms
-registry.get_by_platform("bilibili"); // Some(Arc<dyn DanmuProvider>)
-registry.get_by_url("https://live.douyin.com/xxx"); // Some(Arc<dyn DanmuProvider>)
+registry.get_by_platform("bilibili"); // Some(Arc<dyn DanmakuProvider>)
+registry.get_by_url("https://live.douyin.com/xxx"); // Some(Arc<dyn DanmakuProvider>)
 registry.platforms();                 // ["huya", "bilibili", "douyu", "douyin", "twitch"]
 ```
 
@@ -290,11 +369,11 @@ let ext = create_extractor("bilibili");       // Option<Arc<dyn LiveExtractor>>
 let ext = create_extractor_from_url(url);     // Option<Arc<dyn LiveExtractor>>
 
 // Create danmaku provider by platform
-let p = create_bilibili_danmu_provider();     // BilibiliDanmuProvider
-let p = create_douyin_danmu_provider();       // DouyinDanmuProvider
-let p = create_douyu_danmu_provider();        // DouyuDanmuProvider
-let p = create_huya_danmu_provider();         // HuyaDanmuProvider
-let p = create_twitch_danmu_provider();       // TwitchDanmuProvider
+let p = create_bilibili_danmaku_provider();     // BilibiliDanmakuProvider
+let p = create_douyin_danmaku_provider();       // DouyinDanmakuProvider
+let p = create_douyu_danmaku_provider();        // DouyuDanmakuProvider
+let p = create_huya_danmaku_provider();         // HuyaDanmakuProvider
+let p = create_twitch_danmaku_provider();       // TwitchDanmakuProvider
 ```
 
 ---
@@ -317,6 +396,69 @@ let json: Value = http.get_json_with_headers(url, &headers).await?;
 let text: String = http.post_form_text(url, &form_data).await?;
 let json: Value = http.post_json_json(url, &body).await?;
 let req: RequestBuilder = http.get(url); // low-level with cookies attached
+```
+
+---
+
+## Danmaku Mask (Filtering)
+
+### Overview
+
+The danmaku mask system provides real-time message filtering with:
+
+- **Frequency limiting** — Block repeated messages within a time window
+- **Keyword blacklist** — Block messages containing blacklisted words
+- **Regex support** — Use regex patterns for advanced matching
+- **Composite filtering** — Combine multiple strategies
+
+### WordBlacklist Regex Support
+
+The `WordBlacklist` supports both plain text and regex patterns:
+
+```rust
+use platforms_parser::danmaku_mask::mask_word_blacklist::WordBlacklist;
+
+let bl = WordBlacklist::new(vec![
+    "广告".to_string(),           // Plain text (case-insensitive, normalized)
+    "代练".to_string(),           // Plain text
+    "/加[微V]信/".to_string(),    // Regex: matches "加微信" or "加V信"
+    "/(?i)spam/".to_string(),     // Regex: case-insensitive
+    "/\\d{5,}/".to_string(),      // Regex: matches 5+ digits
+]);
+
+// Plain text matching (normalized)
+assert!(bl.contains_blacklisted("这里有广告"));      // true
+assert!(bl.contains_blacklisted("广告！"));           // true (punctuation removed)
+
+// Regex matching (original text)
+assert!(bl.contains_blacklisted("加微信"));           // true
+assert!(bl.contains_blacklisted("加V信"));            // true
+assert!(bl.contains_blacklisted("this is SPAM"));    // true
+assert!(bl.contains_blacklisted("加我12345"));        // true
+```
+
+**Regex format:**
+- Wrapped in `/pattern/` (e.g., `/广告|代练/`)
+- Uses Rust regex syntax
+- Case-insensitive: `/(?i)pattern/`
+- Invalid patterns are ignored (with warning)
+
+### Runtime Control
+
+```rust
+use platforms_parser::danmaku_mask::mask_provider::MaskedDanmakuProvider;
+
+let provider = MaskedDanmakuProvider::new(inner_provider);
+
+// Dynamic mask management
+provider.set_mask(&conn.id, Box::new(new_mask)).await;
+provider.clear_mask(&conn.id).await;
+provider.reset_mask(&conn.id).await;
+
+// Statistics
+let stats = provider.stats(&conn.id).await;
+println!("Total: {}, Passed: {}, Blocked: {}", 
+    stats.total_received, stats.passed, stats.blocked);
 ```
 
 ---
@@ -391,7 +533,7 @@ This library was built through an iterative AI development process (AI model: **
 
 - **Protocol reverse engineering** — Douyin WebSocket handshake, X-Bogus signature, Bilibili WBI signing, Douyu STT encryption
 - **Architecture design** — Shared HttpClient, trait-based extractor/provider pattern, generic WebSocket framework
-- **Code quality** — Zero warnings, 130+ passing tests, clean separation of concerns
+- **Code quality** — Zero warnings, 150+ passing tests, clean separation of concerns
 - **Refactoring** — Extracted shared HTTP client from 5 platform-specific implementations, unified error handling
 
 ## Acknowledgements

@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use platforms_parser::danmaku::event::DanmuItem;
-use platforms_parser::danmaku::message::DanmuType;
-use platforms_parser::danmaku::provider::{ConnectionConfig, DanmuProvider};
+use platforms_parser::danmaku::event::DanmakuItem;
+use platforms_parser::danmaku::message::DanmakuType;
+use platforms_parser::danmaku::provider::{ConnectionConfig, DanmakuProvider};
 use platforms_parser::extractor::LiveExtractor;
 use platforms_parser::extractor::platforms::huya::HuyaExtractor;
 use platforms_parser::extractor::platforms::huya::danmaku::create_huya_danmu_provider;
@@ -91,6 +91,7 @@ async fn test_huya_danmaku() {
         cookies: None,
         websocket: None,
         extras: Some(extras),
+        mask_config: None,
     };
 
     let mut connection = provider
@@ -115,22 +116,22 @@ async fn test_huya_danmaku() {
             Ok(Some(item)) => {
                 msg_count += 1;
                 match item {
-                    DanmuItem::Message(msg) => match msg.message_type {
-                        DanmuType::Chat => {
+                    DanmakuItem::Message(msg) => match msg.message_type {
+                        DanmakuType::Chat => {
                             chat_count += 1;
                             println!("  💬 [{}] {}", msg.username, msg.content);
                         }
-                        DanmuType::Gift => {
+                        DanmakuType::Gift => {
                             println!("  🎁 [{}] {}", msg.username, msg.content);
                         }
-                        DanmuType::SuperChat => {
+                        DanmakuType::SuperChat => {
                             println!("  💰 [{}] {}", msg.username, msg.content);
                         }
                         _ => {
                             println!("  📢 [{}] {}", msg.username, msg.content);
                         }
                     },
-                    DanmuItem::Control(event) => {
+                    DanmakuItem::Control(event) => {
                         println!("  ⚙️ 控制事件: {:?}", event);
                     }
                 }

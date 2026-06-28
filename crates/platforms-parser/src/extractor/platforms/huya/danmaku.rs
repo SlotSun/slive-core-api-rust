@@ -24,9 +24,9 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::danmaku::error::{DanmakuError, Result};
-use crate::danmaku::event::{DanmuControlEvent, DanmuItem};
-use crate::danmaku::message::DanmuMessage;
-use crate::danmaku::provider::{ConnectionConfig, DanmuConnection, DanmuProvider};
+use crate::danmaku::event::{DanmakuControlEvent, DanmakuItem};
+use crate::danmaku::message::DanmakuMessage;
+use crate::danmaku::provider::{ConnectionConfig, DanmakuConnection, DanmakuProvider};
 use crate::extractor::platforms::huya::tars::push_message::{
     HEARTBEAT_DATA, HYMessage, HYPushMessage, HuyaWsMessage, encode_join_room,
 };
@@ -70,7 +70,7 @@ fn font_color_to_hex(color: i64) -> Option<String> {
     }
 }
 
-/// Decode a raw binary WebSocket frame into zero or more [`DanmuItem`]s.
+/// Decode a raw binary WebSocket frame into zero or more [`DanmakuItem`]s.
 ///
 /// The decoding pipeline is:
 ///
@@ -79,7 +79,7 @@ fn font_color_to_hex(color: i64) -> Option<String> {
 /// 3. Dispatch by `uri`:
 ///    - **1400** → chat message ([`HYMessage::decode`])
 ///    - **8006** → online viewer count (first big-endian `i32` in `msg`)
-fn decode_huya_frame(data: &[u8]) -> std::result::Result<Vec<DanmuItem>, String> {
+fn decode_huya_frame(data: &[u8]) -> std::result::Result<Vec<DanmakuItem>, String> {
     // 1. Outer envelope
     let ws_msg =
         HuyaWsMessage::decode(data).map_err(|e| format!("HuyaWsMessage decode error: {e}"))?;
@@ -105,13 +105,13 @@ fn decode_huya_frame(data: &[u8]) -> std::result::Result<Vec<DanmuItem>, String>
             let username = hy_msg.sender.nick_name;
             let content = hy_msg.content;
 
-            let mut danmu = DanmuMessage::chat(msg_id, user_id, username, content);
+            let mut danmu = DanmakuMessage::chat(msg_id, user_id, username, content);
 
             if let Some(color) = font_color_to_hex(hy_msg.font_color) {
                 danmu = danmu.with_color(color);
             }
 
-            Ok(vec![DanmuItem::Message(danmu)])
+            Ok(vec![DanmakuItem::Message(danmu)])
         }
 
         // ---- Online viewer count (ignored) ----
@@ -130,10 +130,10 @@ fn decode_huya_frame(data: &[u8]) -> std::result::Result<Vec<DanmuItem>, String>
 // Internal connection state
 // ---------------------------------------------------------------------------
 
-/// Per-connection bookkeeping kept inside [`HuyaDanmuProvider`].
+/// Per-connection bookkeeping kept inside [`HuyaDanmakuProvider`].
 struct HuyaConnectionState {
     /// Receiver end of the decoded-message channel.
-    message_rx: Arc<Mutex<mpsc::Receiver<DanmuItem>>>,
+    message_rx: Arc<Mutex<mpsc::Receiver<DanmakuItem>>>,
     /// Sender used to signal the background task to shut down.
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Background task handles (WebSocket reader/heartbeat).
@@ -163,13 +163,13 @@ impl Drop for HuyaConnectionState {
 /// 1. Connects to the Huya danmaku WebSocket.
 /// 2. Sends the TARS-encoded join-room packet.
 /// 3. Sends periodic heartbeats.
-/// 4. Decodes incoming frames and forwards [`DanmuItem`]s through `message_tx`.
+/// 4. Decodes incoming frames and forwards [`DanmakuItem`]s through `message_tx`.
 async fn run_huya_ws_task(
     room_id: String,
     ayyuid: i64,
     top_sid: i64,
     sub_sid: i64,
-    message_tx: mpsc::Sender<DanmuItem>,
+    message_tx: mpsc::Sender<DanmakuItem>,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) {
     // --- Connect ----------------------------------------------------------
@@ -243,7 +243,7 @@ async fn run_huya_ws_task(
                     Some(Ok(Message::Close(_))) => {
                         info!(room_id = %room_id, "WebSocket closed by server");
                         let _ = message_tx
-                            .send(DanmuItem::Control(DanmuControlEvent::StreamClosed {
+                            .send(DanmakuItem::Control(DanmakuControlEvent::StreamClosed {
                                 message: Some("WebSocket closed by server".to_string()),
                                 action: None,
                             }))
@@ -278,15 +278,15 @@ async fn run_huya_ws_task(
 }
 
 // ---------------------------------------------------------------------------
-// HuyaDanmuProvider
+// HuyaDanmakuProvider
 // ---------------------------------------------------------------------------
 
 /// Platform-specific danmaku provider for Huya (虎牙).
-pub struct HuyaDanmuProvider {
+pub struct HuyaDanmakuProvider {
     connections: tokio::sync::RwLock<HashMap<String, Arc<Mutex<HuyaConnectionState>>>>,
 }
 
-impl HuyaDanmuProvider {
+impl HuyaDanmakuProvider {
     pub fn new() -> Self {
         Self {
             connections: tokio::sync::RwLock::new(HashMap::new()),
@@ -295,12 +295,12 @@ impl HuyaDanmuProvider {
 }
 
 /// Convenience factory used by the [`ProviderRegistry`](crate::danmaku::ProviderRegistry).
-pub fn create_huya_danmu_provider() -> HuyaDanmuProvider {
-    HuyaDanmuProvider::new()
+pub fn create_huya_danmu_provider() -> HuyaDanmakuProvider {
+    HuyaDanmakuProvider::new()
 }
 
 #[async_trait]
-impl DanmuProvider for HuyaDanmuProvider {
+impl DanmakuProvider for HuyaDanmakuProvider {
     fn platform(&self) -> &str {
         "huya"
     }
@@ -315,7 +315,7 @@ impl DanmuProvider for HuyaDanmuProvider {
             .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
     }
 
-    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmuConnection> {
+    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmakuConnection> {
         let extras = config.extras.unwrap_or_default();
 
         // Parse required parameters from `config.extras`.
@@ -366,13 +366,13 @@ impl DanmuProvider for HuyaDanmuProvider {
             .await
             .insert(connection_id.clone(), Arc::new(Mutex::new(state)));
 
-        let mut conn = DanmuConnection::new(connection_id, "huya", room_id);
+        let mut conn = DanmakuConnection::new(connection_id, "huya", room_id);
         conn.set_connected();
 
         Ok(conn)
     }
 
-    async fn disconnect(&self, connection: &mut DanmuConnection) -> Result<()> {
+    async fn disconnect(&self, connection: &mut DanmakuConnection) -> Result<()> {
         if let Some(state_arc) = self.connections.write().await.remove(&connection.id) {
             let mut state = state_arc.lock().await;
             // Signal the background task to shut down gracefully.
@@ -386,7 +386,7 @@ impl DanmuProvider for HuyaDanmuProvider {
         Ok(())
     }
 
-    async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>> {
+    async fn receive(&self, connection: &DanmakuConnection) -> Result<Option<DanmakuItem>> {
         // Look up the internal state for this connection.
         let state_arc = {
             let map = self.connections.read().await;
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_standard_url() {
-        let provider = HuyaDanmuProvider::new();
+        let provider = HuyaDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("https://www.huya.com/12345"),
             Some("12345".to_string())
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_no_www() {
-        let provider = HuyaDanmuProvider::new();
+        let provider = HuyaDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("https://huya.com/67890"),
             Some("67890".to_string())
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_no_protocol() {
-        let provider = HuyaDanmuProvider::new();
+        let provider = HuyaDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("www.huya.com/111"),
             Some("111".to_string())
@@ -501,13 +501,13 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_invalid_url() {
-        let provider = HuyaDanmuProvider::new();
+        let provider = HuyaDanmakuProvider::new();
         assert_eq!(provider.extract_room_id("https://example.com/123"), None);
     }
 
     #[test]
     fn test_supports_url() {
-        let provider = HuyaDanmuProvider::new();
+        let provider = HuyaDanmakuProvider::new();
         assert!(provider.supports_url("https://www.huya.com/12345"));
         assert!(!provider.supports_url("https://www.douyu.com/12345"));
     }

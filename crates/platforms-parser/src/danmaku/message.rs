@@ -9,7 +9,7 @@ use std::collections::HashMap;
 /// Type of danmu message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum DanmuType {
+pub enum DanmakuType {
     /// Regular chat message
     #[default]
     Chat,
@@ -31,7 +31,7 @@ pub enum DanmuType {
 
 /// A single danmu message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DanmuMessage {
+pub struct DanmakuMessage {
     /// Unique message ID (platform-specific)
     pub id: String,
     /// User ID of the sender
@@ -46,13 +46,13 @@ pub struct DanmuMessage {
     /// Timestamp when the message was sent
     pub timestamp: DateTime<Utc>,
     /// Type of message
-    pub message_type: DanmuType,
+    pub message_type: DanmakuType,
     /// Platform-specific metadata (optional)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
-impl DanmuMessage {
+impl DanmakuMessage {
     /// Create a new chat message.
     pub fn chat(
         id: impl Into<String>,
@@ -67,7 +67,7 @@ impl DanmuMessage {
             content: content.into(),
             color: None,
             timestamp: Utc::now(),
-            message_type: DanmuType::Chat,
+            message_type: DanmakuType::Chat,
             metadata: None,
         }
     }
@@ -94,7 +94,7 @@ impl DanmuMessage {
             content,
             color: None,
             timestamp: Utc::now(),
-            message_type: DanmuType::Gift,
+            message_type: DanmakuType::Gift,
             metadata: Some(metadata),
         }
     }
@@ -117,13 +117,13 @@ impl DanmuMessage {
             content: content.into(),
             color: None,
             timestamp: Utc::now(),
-            message_type: DanmuType::SuperChat,
+            message_type: DanmakuType::SuperChat,
             metadata: Some(metadata),
         }
     }
 
     pub fn with_super_chat_keep_time(mut self, keep_time: u64) -> Self {
-        if self.message_type == DanmuType::SuperChat {
+        if self.message_type == DanmakuType::SuperChat {
             self.metadata
                 .get_or_insert_with(HashMap::new)
                 .insert("keep_time".to_string(), serde_json::json!(keep_time));
@@ -158,21 +158,21 @@ mod tests {
 
     #[test]
     fn test_danmu_message_chat() {
-        let msg = DanmuMessage::chat("1", "user1", "TestUser", "Hello world!");
+        let msg = DanmakuMessage::chat("1", "user1", "TestUser", "Hello world!");
 
         assert_eq!(msg.id, "1");
         assert_eq!(msg.user_id, "user1");
         assert_eq!(msg.username, "TestUser");
         assert_eq!(msg.content, "Hello world!");
-        assert_eq!(msg.message_type, DanmuType::Chat);
+        assert_eq!(msg.message_type, DanmakuType::Chat);
         assert!(msg.metadata.is_none());
     }
 
     #[test]
     fn test_danmu_message_gift() {
-        let msg = DanmuMessage::gift("2", "user2", "GiftUser", "Rocket", 5);
+        let msg = DanmakuMessage::gift("2", "user2", "GiftUser", "Rocket", 5);
 
-        assert_eq!(msg.message_type, DanmuType::Gift);
+        assert_eq!(msg.message_type, DanmakuType::Gift);
         assert_eq!(msg.content, "赠送 Rocket x5");
         let metadata = msg.metadata.as_ref().unwrap();
         assert_eq!(metadata.get("gift_name").unwrap(), "Rocket");
@@ -181,9 +181,9 @@ mod tests {
 
     #[test]
     fn test_danmu_message_super_chat() {
-        let msg = DanmuMessage::super_chat("3", "user3", "SCUser", "Hello", 30);
+        let msg = DanmakuMessage::super_chat("3", "user3", "SCUser", "Hello", 30);
 
-        assert_eq!(msg.message_type, DanmuType::SuperChat);
+        assert_eq!(msg.message_type, DanmakuType::SuperChat);
         assert_eq!(msg.content, "Hello");
         let metadata = msg.metadata.as_ref().unwrap();
         assert_eq!(metadata.get("price").unwrap(), 30);
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_danmu_message_with_metadata() {
-        let msg = DanmuMessage::chat("1", "user1", "Test", "Hi")
+        let msg = DanmakuMessage::chat("1", "user1", "Test", "Hi")
             .with_metadata("color", serde_json::json!("#FF0000"));
 
         let metadata = msg.metadata.as_ref().unwrap();

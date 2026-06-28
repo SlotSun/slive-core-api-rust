@@ -319,7 +319,7 @@ impl BilibiliExtractor {
         let mut host_list = Vec::new();
         if let Some(hosts) = data.get("host_list").and_then(|v| v.as_array()) {
             for host in hosts {
-                host_list.push(BilibiliDanmuHost {
+                host_list.push(BilibiliDanmakuHost {
                     host: str_field(host, "host"),
                     port: host.get("port").and_then(|v| v.as_u64()).unwrap_or(2243) as u16,
                     wss_port: host.get("wss_port").and_then(|v| v.as_u64()).unwrap_or(443) as u16,

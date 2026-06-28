@@ -6,11 +6,11 @@
 
 use std::time::Duration;
 
-use platforms_parser::danmaku::event::DanmuItem;
-use platforms_parser::danmaku::message::DanmuType;
-use platforms_parser::danmaku::provider::{ConnectionConfig, DanmuProvider};
-use platforms_parser::extractor::LiveExtractor;
+use platforms_parser::danmaku::event::DanmakuItem;
+use platforms_parser::danmaku::message::DanmakuType;
+use platforms_parser::danmaku::provider::{ConnectionConfig, DanmakuProvider};
 use platforms_parser::extractor::platforms::douyu::DouyuExtractor;
+use platforms_parser::extractor::LiveExtractor;
 use platforms_parser::extractor::platforms::douyu::danmaku::create_douyu_danmu_provider;
 
 /// Install the default rustls crypto provider once.
@@ -80,23 +80,23 @@ async fn test_douyu_danmaku() {
             Ok(Some(item)) => {
                 msg_count += 1;
                 match item {
-                    DanmuItem::Message(msg) => match msg.message_type {
-                        DanmuType::Chat => {
+                    DanmakuItem::Message(msg) => match msg.message_type {
+                        DanmakuType::Chat => {
                             chat_count += 1;
                             println!("  [聊天] [{}] {}", msg.username, msg.content);
                         }
-                        DanmuType::Gift => {
+                        DanmakuType::Gift => {
                             gift_count += 1;
                             println!("  [礼物] [{}] {}", msg.username, msg.content);
                         }
-                        DanmuType::SuperChat => {
+                        DanmakuType::SuperChat => {
                             println!("  [醒目留言] [{}] {}", msg.username, msg.content);
                         }
                         _ => {
                             println!("  [其他] [{}] {}", msg.username, msg.content);
                         }
                     },
-                    DanmuItem::Control(event) => {
+                    DanmakuItem::Control(event) => {
                         println!("  [控制] {:?}", event);
                     }
                 }

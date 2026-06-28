@@ -23,7 +23,7 @@ pub(crate) fn get_common_params() -> HashMap<&'static str, &'static str> {
     params.insert("browser_language", "zh-CN");
     params.insert("browser_platform", "Win32");
     params.insert("browser_name", "Mozilla");
-    let ua = crate::USER_AGENT.trim_start_matches("Mozilla/");
+    let ua = crate::extractor::http_client::USER_AGENT.trim_start_matches("Mozilla/");
     let browser_version = ua
         .split("Chrome/")
         .nth(1)
@@ -61,7 +61,7 @@ pub async fn fetch_ttwid(client: &Client) -> String {
     // Fetch ttwid from Douyin's ttwid endpoint
     let response = match client
         .post(UNION_REGISTER_URL)
-        .header(reqwest::header::USER_AGENT, crate::USER_AGENT)
+        .header(reqwest::header::USER_AGENT, crate::extractor::http_client::USER_AGENT)
         .json(&json)
         .send()
         .await

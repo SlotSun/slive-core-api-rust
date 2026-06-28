@@ -7,12 +7,13 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 use crate::danmaku::error::Result;
-use crate::danmaku::event::DanmuItem;
+use crate::danmaku::event::DanmakuItem;
 use crate::danmaku::websocket::WebSocketProviderConfig;
+use crate::danmaku_mask::mask_config::MaskConfig;
 
 /// Connection handle for an active danmu stream.
 #[derive(Debug)]
-pub struct DanmuConnection {
+pub struct DanmakuConnection {
     /// Unique connection ID
     pub id: String,
     /// Platform identifier
@@ -27,7 +28,7 @@ pub struct DanmuConnection {
     pub reconnect_count: u32,
 }
 
-impl DanmuConnection {
+impl DanmakuConnection {
     /// Create a new connection handle.
     pub fn new(
         id: impl Into<String>,
@@ -70,6 +71,8 @@ pub struct ConnectionConfig {
     pub websocket: Option<WebSocketProviderConfig>,
     /// Platform-specific extras (e.g., presenter_uid for huya, id_str for douyin)
     pub extras: Option<HashMap<String, String>>,
+    /// Optional danmaku mask configuration.
+    pub mask_config: Option<MaskConfig>,
 }
 
 impl ConnectionConfig {
@@ -79,6 +82,7 @@ impl ConnectionConfig {
             cookies,
             websocket: None,
             extras: None,
+            mask_config: None,
         }
     }
 
@@ -93,23 +97,29 @@ impl ConnectionConfig {
         self.extras = Some(extras);
         self
     }
+
+    /// Set mask configuration.
+    pub fn with_mask(mut self, mask_config: MaskConfig) -> Self {
+        self.mask_config = Some(mask_config);
+        self
+    }
 }
 
 /// Trait for platform-specific danmu providers.
 #[async_trait]
-pub trait DanmuProvider: Send + Sync {
+pub trait DanmakuProvider: Send + Sync {
     /// Get the platform name this provider handles.
     fn platform(&self) -> &str;
 
     /// Connect to the danmu stream for a room.
-    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmuConnection>;
+    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmakuConnection>;
 
     /// Disconnect from the danmu stream.
-    async fn disconnect(&self, connection: &mut DanmuConnection) -> Result<()>;
+    async fn disconnect(&self, connection: &mut DanmakuConnection) -> Result<()>;
 
     /// Receive the next danmu item (message or control event).
     /// Returns None if the connection is closed.
-    async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>>;
+    async fn receive(&self, connection: &DanmakuConnection) -> Result<Option<DanmakuItem>>;
 
     /// Check if the provider supports the given URL.
     fn supports_url(&self, url: &str) -> bool;
@@ -124,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_danmu_connection() {
-        let mut conn = DanmuConnection::new("conn1", "huya", "12345");
+        let mut conn = DanmakuConnection::new("conn1", "huya", "12345");
 
         assert!(!conn.is_connected);
         assert_eq!(conn.reconnect_count, 0);

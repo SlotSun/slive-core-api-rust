@@ -5,9 +5,6 @@ members=[
     "crates/bytes-util",
     "crates/platforms-parser",
 ]
-exclude=[
-    "slive_core",
-]
 
 [workspace.package]
 version = "0.0.1"
@@ -72,3 +69,4 @@ memchr = "2.7.6"
 criterion = "0.8.1"
 zlib-rs = "0.6.3"
 parking_lot = "0.12"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }

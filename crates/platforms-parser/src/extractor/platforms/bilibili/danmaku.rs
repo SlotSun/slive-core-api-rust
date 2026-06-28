@@ -34,9 +34,9 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::danmaku::error::{DanmakuError, Result};
-use crate::danmaku::event::{DanmuControlEvent, DanmuItem};
-use crate::danmaku::message::DanmuMessage;
-use crate::danmaku::provider::{ConnectionConfig, DanmuConnection, DanmuProvider};
+use crate::danmaku::event::{DanmakuControlEvent, DanmakuItem};
+use crate::danmaku::message::DanmakuMessage;
+use crate::danmaku::provider::{ConnectionConfig, DanmakuConnection, DanmakuProvider};
 use crate::extractor::http_client::HttpClient;
 use crate::extractor::platforms::bilibili::wbi;
 
@@ -167,24 +167,24 @@ fn decompress_zlib(data: &[u8]) -> std::result::Result<Vec<u8>, String> {
 // Notification parsing
 // ---------------------------------------------------------------------------
 
-/// Parse a raw JSON notification into zero or more [`DanmuItem`]s.
-fn parse_notification_json(json: &JsonValue) -> Vec<DanmuItem> {
+/// Parse a raw JSON notification into zero or more [`DanmakuItem`]s.
+fn parse_notification_json(json: &JsonValue) -> Vec<DanmakuItem> {
     let cmd = json.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
     match cmd {
         "DANMU_MSG" => parse_danmu_msg(json)
-            .map(DanmuItem::Message)
+            .map(DanmakuItem::Message)
             .into_iter()
             .collect(),
         "SEND_GIFT" => parse_send_gift(json)
-            .map(DanmuItem::Message)
+            .map(DanmakuItem::Message)
             .into_iter()
             .collect(),
         "SUPER_CHAT_MESSAGE" => parse_super_chat_message(json)
-            .map(DanmuItem::Message)
+            .map(DanmakuItem::Message)
             .into_iter()
             .collect(),
         "ROOM_CHANGE" => parse_room_change(json)
-            .map(DanmuItem::Control)
+            .map(DanmakuItem::Control)
             .into_iter()
             .collect(),
         _ => {
@@ -194,8 +194,8 @@ fn parse_notification_json(json: &JsonValue) -> Vec<DanmuItem> {
     }
 }
 
-/// Recursively parse binary data into [`DanmuItem`]s, handling compression.
-fn parse_notification_recursive(data: &[u8], proto_ver: u16) -> Vec<DanmuItem> {
+/// Recursively parse binary data into [`DanmakuItem`]s, handling compression.
+fn parse_notification_recursive(data: &[u8], proto_ver: u16) -> Vec<DanmakuItem> {
     match proto_ver {
         // Raw JSON packets
         0 | 1 => {
@@ -263,7 +263,7 @@ fn parse_notification_recursive(data: &[u8], proto_ver: u16) -> Vec<DanmuItem> {
 ///
 /// Structure: `info[1]` = content, `info[2][0]` = uid, `info[2][1]` = username,
 /// `info[0][3]` = font color.
-fn parse_danmu_msg(json: &JsonValue) -> Option<DanmuMessage> {
+fn parse_danmu_msg(json: &JsonValue) -> Option<DanmakuMessage> {
     let info = json.get("info")?.as_array()?;
     let content = info.get(1)?.as_str()?;
     let user_info = info.get(2)?.as_array()?;
@@ -280,7 +280,7 @@ fn parse_danmu_msg(json: &JsonValue) -> Option<DanmuMessage> {
 
     let color_hex = color.map(|c| format!("#{:06X}", c as u32));
 
-    let mut msg = DanmuMessage::chat(
+    let mut msg = DanmakuMessage::chat(
         Uuid::new_v4().to_string(),
         uid.to_string(),
         username,
@@ -297,7 +297,7 @@ fn parse_danmu_msg(json: &JsonValue) -> Option<DanmuMessage> {
 /// Parse a `SEND_GIFT` command.
 ///
 /// Structure: `data.uname`, `data.action`, `data.giftName`, `data.num`.
-fn parse_send_gift(json: &JsonValue) -> Option<DanmuMessage> {
+fn parse_send_gift(json: &JsonValue) -> Option<DanmakuMessage> {
     let data = json.get("data")?;
     let uid = data.get("uid")?.as_u64()?;
     let username = data.get("uname")?.as_str()?;
@@ -307,7 +307,7 @@ fn parse_send_gift(json: &JsonValue) -> Option<DanmuMessage> {
 
     let content = format!("{} {} x{}", action, gift_name, num);
 
-    let msg = DanmuMessage::gift(
+    let msg = DanmakuMessage::gift(
         Uuid::new_v4().to_string(),
         uid.to_string(),
         username,
@@ -327,7 +327,7 @@ fn parse_send_gift(json: &JsonValue) -> Option<DanmuMessage> {
 ///
 /// Structure: `data.id`, `data.uid`, `data.user_info.uname`, `data.message`,
 /// `data.price`, `data.time`.
-fn parse_super_chat_message(json: &JsonValue) -> Option<DanmuMessage> {
+fn parse_super_chat_message(json: &JsonValue) -> Option<DanmakuMessage> {
     let data = json.get("data")?;
     let id = data.get("id")?.as_u64()?;
     let uid = data.get("uid")?.as_u64()?;
@@ -357,7 +357,7 @@ fn parse_super_chat_message(json: &JsonValue) -> Option<DanmuMessage> {
         .unwrap_or("")
         .to_string();
 
-    let msg = DanmuMessage::super_chat(
+    let msg = DanmakuMessage::super_chat(
         id.to_string(),
         uid.to_string(),
         username,
@@ -373,10 +373,10 @@ fn parse_super_chat_message(json: &JsonValue) -> Option<DanmuMessage> {
     Some(msg)
 }
 
-/// Parse a `ROOM_CHANGE` command as a [`DanmuControlEvent`].
+/// Parse a `ROOM_CHANGE` command as a [`DanmakuControlEvent`].
 ///
 /// Structure: `data.title`, `data.area_name`, `data.parent_area_name`.
-fn parse_room_change(json: &JsonValue) -> Option<DanmuControlEvent> {
+fn parse_room_change(json: &JsonValue) -> Option<DanmakuControlEvent> {
     let data = json.get("data")?;
     let title = data
         .get("title")
@@ -391,7 +391,7 @@ fn parse_room_change(json: &JsonValue) -> Option<DanmuControlEvent> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    Some(DanmuControlEvent::RoomInfoChanged {
+    Some(DanmakuControlEvent::RoomInfoChanged {
         title,
         category: area_name,
         parent_category: parent_area_name,
@@ -402,10 +402,10 @@ fn parse_room_change(json: &JsonValue) -> Option<DanmuControlEvent> {
 // Internal connection state
 // ---------------------------------------------------------------------------
 
-/// Per-connection bookkeeping kept inside [`BilibiliDanmuProvider`].
+/// Per-connection bookkeeping kept inside [`BilibiliDanmakuProvider`].
 struct BilibiliConnectionState {
     /// Receiver end of the decoded-message channel.
-    message_rx: Arc<Mutex<mpsc::Receiver<DanmuItem>>>,
+    message_rx: Arc<Mutex<mpsc::Receiver<DanmakuItem>>>,
     /// Sender used to signal the background task to shut down.
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Background task handles (WebSocket reader/heartbeat).
@@ -455,7 +455,7 @@ fn url_encode(s: &str) -> String {
 /// 1. Connects to the Bilibili danmaku WebSocket.
 /// 2. Sends the auth packet (op=7).
 /// 3. Sends periodic heartbeats (op=2).
-/// 4. Decodes incoming frames and forwards [`DanmuItem`]s through `message_tx`.
+/// 4. Decodes incoming frames and forwards [`DanmakuItem`]s through `message_tx`.
 async fn run_bilibili_ws_task(
     room_id: u64,
     token: String,
@@ -463,7 +463,7 @@ async fn run_bilibili_ws_task(
     uid: u64,
     buvid: String,
     cookies: String,
-    message_tx: mpsc::Sender<DanmuItem>,
+    message_tx: mpsc::Sender<DanmakuItem>,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) {
     // --- Connect ----------------------------------------------------------
@@ -559,7 +559,7 @@ async fn run_bilibili_ws_task(
                     Some(Ok(Message::Close(_))) => {
                         info!(room_id = room_id, "WebSocket closed by server");
                         let _ = message_tx
-                            .send(DanmuItem::Control(DanmuControlEvent::StreamClosed {
+                            .send(DanmakuItem::Control(DanmakuControlEvent::StreamClosed {
                                 message: Some("WebSocket closed by server".to_string()),
                                 action: None,
                             }))
@@ -594,16 +594,16 @@ async fn run_bilibili_ws_task(
 }
 
 // ---------------------------------------------------------------------------
-// BilibiliDanmuProvider
+// BilibiliDanmakuProvider
 // ---------------------------------------------------------------------------
 
 /// Platform-specific danmaku provider for Bilibili (哔哩哔哩).
-pub struct BilibiliDanmuProvider {
+pub struct BilibiliDanmakuProvider {
     http: HttpClient,
     connections: tokio::sync::RwLock<HashMap<String, Arc<Mutex<BilibiliConnectionState>>>>,
 }
 
-impl BilibiliDanmuProvider {
+impl BilibiliDanmakuProvider {
     pub fn new() -> Self {
         Self {
             http: HttpClient::builder()
@@ -745,12 +745,12 @@ impl BilibiliDanmuProvider {
 }
 
 /// Convenience factory used by the [`ProviderRegistry`](crate::danmaku::registry::ProviderRegistry).
-pub fn create_bilibili_danmu_provider() -> BilibiliDanmuProvider {
-    BilibiliDanmuProvider::new()
+pub fn create_bilibili_danmu_provider() -> BilibiliDanmakuProvider {
+    BilibiliDanmakuProvider::new()
 }
 
 #[async_trait]
-impl DanmuProvider for BilibiliDanmuProvider {
+impl DanmakuProvider for BilibiliDanmakuProvider {
     fn platform(&self) -> &str {
         "bilibili"
     }
@@ -765,7 +765,7 @@ impl DanmuProvider for BilibiliDanmuProvider {
             .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
     }
 
-    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmuConnection> {
+    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmakuConnection> {
         // Accept cookies from config for authenticated access.
         if let Some(cookies) = config.cookies {
             if !cookies.is_empty() {
@@ -843,13 +843,13 @@ impl DanmuProvider for BilibiliDanmuProvider {
             .await
             .insert(connection_id.clone(), Arc::new(Mutex::new(state)));
 
-        let mut conn = DanmuConnection::new(connection_id, "bilibili", real_room_id.to_string());
+        let mut conn = DanmakuConnection::new(connection_id, "bilibili", real_room_id.to_string());
         conn.set_connected();
 
         Ok(conn)
     }
 
-    async fn disconnect(&self, connection: &mut DanmuConnection) -> Result<()> {
+    async fn disconnect(&self, connection: &mut DanmakuConnection) -> Result<()> {
         if let Some(state_arc) = self.connections.write().await.remove(&connection.id) {
             let mut state = state_arc.lock().await;
             // Signal the background task to shut down gracefully.
@@ -863,7 +863,7 @@ impl DanmuProvider for BilibiliDanmuProvider {
         Ok(())
     }
 
-    async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>> {
+    async fn receive(&self, connection: &DanmakuConnection) -> Result<Option<DanmakuItem>> {
         // Look up the internal state for this connection.
         let state_arc = {
             let map = self.connections.read().await;

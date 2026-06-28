@@ -10,6 +10,9 @@ use tracing::warn;
 use crate::extractor::error::ExtractorError;
 use crate::extractor::live_extractor::Result;
 
+/// Default User-Agent string for HTTP requests.
+pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
 /// Ensure a rustls crypto provider is installed (once per process).
 fn ensure_crypto_provider() {
     static INIT: OnceLock<()> = OnceLock::new();
@@ -272,7 +275,7 @@ pub struct HttpClientBuilder {
 impl Default for HttpClientBuilder {
     fn default() -> Self {
         Self {
-            user_agent: crate::USER_AGENT.to_string(),
+            user_agent: USER_AGENT.to_string(),
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             read_timeout: DEFAULT_READ_TIMEOUT,
             default_headers: HeaderMap::new(),

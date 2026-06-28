@@ -30,9 +30,9 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::danmaku::error::{DanmakuError, Result};
-use crate::danmaku::event::{DanmuControlEvent, DanmuItem};
-use crate::danmaku::message::DanmuMessage;
-use crate::danmaku::provider::{ConnectionConfig, DanmuConnection, DanmuProvider};
+use crate::danmaku::event::{DanmakuControlEvent, DanmakuItem};
+use crate::danmaku::message::DanmakuMessage;
+use crate::danmaku::provider::{ConnectionConfig, DanmakuConnection, DanmakuProvider};
 
 use super::stt;
 
@@ -97,8 +97,8 @@ fn extract_douyu_face(inner: &FxHashMap<String, String>) -> String {
 // Danmu message dispatching
 // ---------------------------------------------------------------------------
 
-/// Dispatch a decoded STT message map into zero or more [`DanmuItem`]s.
-fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
+/// Dispatch a decoded STT message map into zero or more [`DanmakuItem`]s.
+fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmakuItem> {
     let msg_type = match msg.get("type") {
         Some(t) => t.as_str(),
         None => return vec![],
@@ -116,7 +116,7 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                 return vec![];
             }
 
-            let mut danmu = DanmuMessage::chat(msg_id, uid, nn, txt);
+            let mut danmu = DanmakuMessage::chat(msg_id, uid, nn, txt);
 
             // Extract color info if present, but skip black/dark colors.
             if let Some(col) = msg.get("col") {
@@ -140,7 +140,7 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                 danmu = danmu.with_metadata("level", serde_json::json!(level));
             }
 
-            vec![DanmuItem::Message(danmu)]
+            vec![DanmakuItem::Message(danmu)]
         }
 
         // ---- Gift message (ignored) ----
@@ -196,7 +196,7 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                 })
                 .unwrap_or_default();
 
-            let danmu = DanmuMessage::super_chat(msg_id, "", nn, txt, price)
+            let danmu = DanmakuMessage::super_chat(msg_id, "", nn, txt, price)
                 .with_super_chat_keep_time(keep_time)
                 .with_metadata("sc_type", serde_json::json!("comm_chatmsg"))
                 .with_metadata("face", serde_json::json!(face))
@@ -208,7 +208,7 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                     serde_json::json!("#246488"),
                 );
 
-            vec![DanmuItem::Message(danmu)]
+            vec![DanmakuItem::Message(danmu)]
         }
 
         // ---- Super chat: 高能弹幕 ----
@@ -244,7 +244,7 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                 })
                 .unwrap_or_default();
 
-            let danmu = DanmuMessage::super_chat(msg_id, "", nn, content, price)
+            let danmu = DanmakuMessage::super_chat(msg_id, "", nn, content, price)
                 .with_super_chat_keep_time(keep_time)
                 .with_metadata("sc_type", serde_json::json!("voice_trlt"))
                 .with_metadata("face", serde_json::json!(face))
@@ -256,7 +256,7 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
                     serde_json::json!("#246488"),
                 );
 
-            vec![DanmuItem::Message(danmu)]
+            vec![DanmakuItem::Message(danmu)]
         }
 
         // ---- Login response (loginres) ----
@@ -283,10 +283,10 @@ fn dispatch_stt_message(msg: FxHashMap<String, String>) -> Vec<DanmuItem> {
 // Internal connection state
 // ---------------------------------------------------------------------------
 
-/// Per-connection bookkeeping kept inside [`DouyuDanmuProvider`].
+/// Per-connection bookkeeping kept inside [`DouyuDanmakuProvider`].
 struct DouyuConnectionState {
     /// Receiver end of the decoded-message channel.
-    message_rx: Arc<Mutex<mpsc::Receiver<DanmuItem>>>,
+    message_rx: Arc<Mutex<mpsc::Receiver<DanmakuItem>>>,
     /// Sender used to signal the background task to shut down.
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Background task handles (WebSocket reader/heartbeat).
@@ -313,9 +313,9 @@ impl Drop for DouyuConnectionState {
 // ---------------------------------------------------------------------------
 
 /// Helper to send a `StreamClosed` error through the channel.
-async fn send_close_event(tx: &mpsc::Sender<DanmuItem>, msg: String) {
+async fn send_close_event(tx: &mpsc::Sender<DanmakuItem>, msg: String) {
     let _ = tx
-        .send(DanmuItem::Control(DanmuControlEvent::StreamClosed {
+        .send(DanmakuItem::Control(DanmakuControlEvent::StreamClosed {
             message: Some(msg),
             action: None,
         }))
@@ -326,10 +326,10 @@ async fn send_close_event(tx: &mpsc::Sender<DanmuItem>, msg: String) {
 /// 1. Connects to the Douyu danmaku WebSocket.
 /// 2. Sends login request + join-group request immediately (no wait for response).
 /// 3. Sends periodic heartbeats.
-/// 4. Decodes incoming frames and forwards [`DanmuItem`]s through `message_tx`.
+/// 4. Decodes incoming frames and forwards [`DanmakuItem`]s through `message_tx`.
 async fn run_douyu_ws_task(
     room_id: String,
-    message_tx: mpsc::Sender<DanmuItem>,
+    message_tx: mpsc::Sender<DanmakuItem>,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) {
     // --- Connect ----------------------------------------------------------
@@ -464,15 +464,15 @@ async fn run_douyu_ws_task(
 }
 
 // ---------------------------------------------------------------------------
-// DouyuDanmuProvider
+// DouyuDanmakuProvider
 // ---------------------------------------------------------------------------
 
 /// Platform-specific danmaku provider for Douyu (斗鱼).
-pub struct DouyuDanmuProvider {
+pub struct DouyuDanmakuProvider {
     connections: tokio::sync::RwLock<HashMap<String, Arc<Mutex<DouyuConnectionState>>>>,
 }
 
-impl DouyuDanmuProvider {
+impl DouyuDanmakuProvider {
     pub fn new() -> Self {
         Self {
             connections: tokio::sync::RwLock::new(HashMap::new()),
@@ -481,12 +481,12 @@ impl DouyuDanmuProvider {
 }
 
 /// Convenience factory used by the [`ProviderRegistry`](crate::danmaku::ProviderRegistry).
-pub fn create_douyu_danmu_provider() -> DouyuDanmuProvider {
-    DouyuDanmuProvider::new()
+pub fn create_douyu_danmu_provider() -> DouyuDanmakuProvider {
+    DouyuDanmakuProvider::new()
 }
 
 #[async_trait]
-impl DanmuProvider for DouyuDanmuProvider {
+impl DanmakuProvider for DouyuDanmakuProvider {
     fn platform(&self) -> &str {
         "douyu"
     }
@@ -501,10 +501,10 @@ impl DanmuProvider for DouyuDanmuProvider {
             .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
     }
 
-    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmuConnection> {
+    async fn connect(&self, room_id: &str, config: ConnectionConfig) -> Result<DanmakuConnection> {
         let _ = config; // Douyu doesn't need extra config for danmaku.
 
-        info!(room_id = %room_id, "DouyuDanmuProvider::connect called");
+        info!(room_id = %room_id, "DouyuDanmakuProvider::connect called");
 
         // Set up channels and spawn the background task.
         let connection_id = format!("douyu-{}-{}", room_id, Uuid::new_v4());
@@ -526,13 +526,13 @@ impl DanmuProvider for DouyuDanmuProvider {
             .await
             .insert(connection_id.clone(), Arc::new(Mutex::new(state)));
 
-        let mut conn = DanmuConnection::new(connection_id, "douyu", room_id);
+        let mut conn = DanmakuConnection::new(connection_id, "douyu", room_id);
         conn.set_connected();
 
         Ok(conn)
     }
 
-    async fn disconnect(&self, connection: &mut DanmuConnection) -> Result<()> {
+    async fn disconnect(&self, connection: &mut DanmakuConnection) -> Result<()> {
         if let Some(state_arc) = self.connections.write().await.remove(&connection.id) {
             let mut state = state_arc.lock().await;
             // Signal the background task to shut down gracefully.
@@ -546,7 +546,7 @@ impl DanmuProvider for DouyuDanmuProvider {
         Ok(())
     }
 
-    async fn receive(&self, connection: &DanmuConnection) -> Result<Option<DanmuItem>> {
+    async fn receive(&self, connection: &DanmakuConnection) -> Result<Option<DanmakuItem>> {
         trace!(connection_id = %connection.id, "receive() called");
 
         // Look up the internal state for this connection.
@@ -620,7 +620,7 @@ impl DanmuProvider for DouyuDanmuProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::danmaku::message::DanmuType;
+    use crate::danmaku::message::DanmakuType;
 
     // ------------------------------------------------------------------
     // Message dispatch tests
@@ -637,13 +637,13 @@ mod tests {
         let items = dispatch_stt_message(msg);
         assert_eq!(items.len(), 1);
 
-        if let DanmuItem::Message(danmu) = &items[0] {
+        if let DanmakuItem::Message(danmu) = &items[0] {
             assert_eq!(danmu.user_id, "12345");
             assert_eq!(danmu.username, "TestUser");
             assert_eq!(danmu.content, "Hello world!");
-            assert_eq!(danmu.message_type, DanmuType::Chat);
+            assert_eq!(danmu.message_type, DanmakuType::Chat);
         } else {
-            panic!("Expected DanmuItem::Message");
+            panic!("Expected DanmakuItem::Message");
         }
     }
 
@@ -699,8 +699,8 @@ mod tests {
         let items = dispatch_stt_message(msg);
         assert_eq!(items.len(), 1);
 
-        if let DanmuItem::Message(danmu) = &items[0] {
-            assert_eq!(danmu.message_type, DanmuType::SuperChat);
+        if let DanmakuItem::Message(danmu) = &items[0] {
+            assert_eq!(danmu.message_type, DanmakuType::SuperChat);
             assert_eq!(danmu.username, "大佬");
             assert_eq!(danmu.content, "加油！");
             let meta = danmu.metadata.as_ref().unwrap();
@@ -711,7 +711,7 @@ mod tests {
                 &serde_json::json!("comm_chatmsg")
             );
         } else {
-            panic!("Expected DanmuItem::Message");
+            panic!("Expected DanmakuItem::Message");
         }
     }
 
@@ -725,8 +725,8 @@ mod tests {
         let items = dispatch_stt_message(msg);
         assert_eq!(items.len(), 1);
 
-        if let DanmuItem::Message(danmu) = &items[0] {
-            assert_eq!(danmu.message_type, DanmuType::SuperChat);
+        if let DanmakuItem::Message(danmu) = &items[0] {
+            assert_eq!(danmu.message_type, DanmakuType::SuperChat);
             assert_eq!(danmu.username, "测试用户");
             assert_eq!(danmu.content, "高能弹幕来了！");
             let meta = danmu.metadata.as_ref().unwrap();
@@ -736,7 +736,7 @@ mod tests {
                 &serde_json::json!("voice_trlt")
             );
         } else {
-            panic!("Expected DanmuItem::Message");
+            panic!("Expected DanmakuItem::Message");
         }
     }
 
@@ -796,7 +796,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_standard_url() {
-        let provider = DouyuDanmuProvider::new();
+        let provider = DouyuDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("https://www.douyu.com/12345"),
             Some("12345".to_string())
@@ -805,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_no_www() {
-        let provider = DouyuDanmuProvider::new();
+        let provider = DouyuDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("https://douyu.com/67890"),
             Some("67890".to_string())
@@ -814,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_no_protocol() {
-        let provider = DouyuDanmuProvider::new();
+        let provider = DouyuDanmakuProvider::new();
         assert_eq!(
             provider.extract_room_id("www.douyu.com/111"),
             Some("111".to_string())
@@ -823,20 +823,20 @@ mod tests {
 
     #[test]
     fn test_extract_room_id_invalid_url() {
-        let provider = DouyuDanmuProvider::new();
+        let provider = DouyuDanmakuProvider::new();
         assert_eq!(provider.extract_room_id("https://example.com/123"), None);
     }
 
     #[test]
     fn test_supports_url() {
-        let provider = DouyuDanmuProvider::new();
+        let provider = DouyuDanmakuProvider::new();
         assert!(provider.supports_url("https://www.douyu.com/12345"));
         assert!(!provider.supports_url("https://www.huya.com/12345"));
     }
 
     #[test]
     fn test_platform() {
-        let provider = DouyuDanmuProvider::new();
+        let provider = DouyuDanmakuProvider::new();
         assert_eq!(provider.platform(), "douyu");
     }
 }
