@@ -212,7 +212,7 @@ impl DouyinExtractor {
     /// Note: This endpoint does NOT require A-Bogus signing.
     async fn fetch_room_enter(&self, web_rid: &str) -> Result<(JsonValue, Option<String>)> {
         let url = format!(
-            "{ROOM_ENTER_URL}?aid=6383&app_name=douyin_web&live_id=1&device_platform=webapp&language=zh-CN&enter_from=web_live&browser_language=zh-CN&browser_platform=Win32&browser_name=Mozilla&browser_version=131.0.0.0"
+            "{ROOM_ENTER_URL}?aid=6383&app_name=douyin_web&live_id=1&device_platform=webapp&language=zh-CN&enter_from=web_live&browser_language=zh-CN&browser_platform=Win32&browser_name=Mozilla&browser_version=125.0.0.0"
         );
         let headers = self.request_headers().await;
         let resp = self
@@ -242,7 +242,7 @@ impl DouyinExtractor {
     /// Debug: fetch raw room-enter response as string.
     pub async fn fetch_room_enter_debug(&self, web_rid: &str) -> Result<String> {
         let url = format!(
-            "{ROOM_ENTER_URL}?aid=6383&app_name=douyin_web&live_id=1&device_platform=webapp&language=zh-CN&enter_from=web_live&browser_language=zh-CN&browser_platform=Win32&browser_name=Mozilla&browser_version=131.0.0.0"
+            "{ROOM_ENTER_URL}?aid=6383&app_name=douyin_web&live_id=1&device_platform=webapp&language=zh-CN&enter_from=web_live&browser_language=zh-CN&browser_platform=Win32&browser_name=Mozilla&browser_version=125.0.0.0"
         );
         let headers = self.request_headers().await;
         let resp = self
@@ -646,6 +646,7 @@ impl LiveExtractor for DouyinExtractor {
         let client = self.http.inner();
         let resp = client
             .get(&url)
+            .header("Authority", "www.douyin.com")
             .header("accept", "application/json, text/plain, */*")
             .header("accept-language", "zh-CN,zh;q=0.9,en;q=0.8")
             .header("cookie", &cookie)
@@ -660,9 +661,10 @@ impl LiveExtractor for DouyinExtractor {
             .header("sec-fetch-dest", "empty")
             .header("sec-fetch-mode", "cors")
             .header("sec-fetch-site", "same-origin")
+            .header("user-agent",DOUYIN_USER_AGENT)
             .send()
             .await
-            .map_err(|e| ExtractorError::HttpError(e))?;
+            .map_err(ExtractorError::HttpError)?;
 
         let text = resp.text().await.map_err(|e| ExtractorError::HttpError(e))?;
         if text.is_empty() || text == "blocked" {

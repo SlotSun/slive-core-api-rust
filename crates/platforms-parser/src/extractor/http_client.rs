@@ -264,12 +264,22 @@ impl HttpClient {
 // Builder
 // ===========================================================================
 
+/// TLS backend selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsBackend {
+    /// Use rustls (default).
+    Rustls,
+    /// Use native-tls (OpenSSL on Linux, SChannel on Windows, Security.framework on macOS).
+    NativeTls,
+}
+
 /// Builder for [`HttpClient`].
 pub struct HttpClientBuilder {
     user_agent: String,
     connect_timeout: Duration,
     read_timeout: Duration,
     default_headers: HeaderMap,
+    tls_backend: TlsBackend,
 }
 
 impl Default for HttpClientBuilder {
@@ -279,6 +289,7 @@ impl Default for HttpClientBuilder {
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             read_timeout: DEFAULT_READ_TIMEOUT,
             default_headers: HeaderMap::new(),
+            tls_backend: TlsBackend::Rustls,
         }
     }
 }
@@ -314,16 +325,33 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Use native-tls instead of rustls for TLS connections.
+    ///
+    /// This is useful when you need a TLS fingerprint that matches the host OS
+    /// (e.g., SChannel on Windows) rather than rustls's fingerprint.
+    pub fn use_native_tls(mut self) -> Self {
+        self.tls_backend = TlsBackend::NativeTls;
+        self
+    }
+
     /// Build the [`HttpClient`].
     pub fn build(self) -> Result<HttpClient> {
-        ensure_crypto_provider();
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .user_agent(&self.user_agent)
             .connect_timeout(self.connect_timeout)
             .timeout(self.read_timeout)
-            .default_headers(self.default_headers.clone())
-            .build()
-            .map_err(ExtractorError::HttpError)?;
+            .default_headers(self.default_headers.clone());
+
+        match self.tls_backend {
+            TlsBackend::Rustls => {
+                ensure_crypto_provider();
+            }
+            TlsBackend::NativeTls => {
+                builder = builder.use_native_tls();
+            }
+        }
+
+        let client = builder.build().map_err(ExtractorError::HttpError)?;
 
         Ok(HttpClient {
             client: RwLock::new(client),

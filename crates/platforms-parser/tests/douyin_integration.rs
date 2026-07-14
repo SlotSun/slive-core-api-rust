@@ -125,7 +125,7 @@ async fn test_search_rooms() {
     ensure_tls_provider();
     let ext = DouyinExtractor::new().with_auth_cookies(common::douyin_cookies());
     // Debug: fetch raw search response
-    match ext.search_rooms_debug("游戏").await {
+    match ext.search_rooms_debug("三角洲").await {
         Ok(raw) => {
             let display = if raw.len() > 800 { &raw[..800] } else { &raw };
             println!(
@@ -135,7 +135,7 @@ async fn test_search_rooms() {
         }
         Err(e) => println!("  ⚠️ search_rooms_debug failed: {}", e),
     }
-    match ext.search_rooms("游戏", 1).await {
+    match ext.search_rooms("三角洲", 1).await {
         Ok(result) => {
             println!("=== Douyin 搜索直播间 ===");
             println!(
